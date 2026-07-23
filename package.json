@@ -1,0 +1,26 @@
+{
+  "name": "a11y-core-selenium",
+  "version": "0.1.0",
+  "description": "Selenium WebDriver binding for a11y-core -- scan real, live-rendered pages for accessibility issues.",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "a11y-core": "file:../a11y-core"
+  },
+  "peerDependencies": {
+    "selenium-webdriver": ">=4.11.0"
+  },
+  "devDependencies": {
+    "@types/selenium-webdriver": "^4.1.28",
+    "selenium-webdriver": "^4.46.0"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "example": "node examples/basic-scan.js",
+    "example:e2e": "node --test examples/e2e-test-example.test.js"
+  }
+}
