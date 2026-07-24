@@ -5,12 +5,25 @@
   "main": "src/index.js",
   "types": "src/index.d.ts",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rumoroso/a11y-core-selenium.git"
+  },
+  "homepage": "https://github.com/rumoroso/a11y-core-selenium#readme",
+  "bugs": {
+    "url": "https://github.com/rumoroso/a11y-core-selenium/issues"
+  },
   "engines": {
     "node": ">=22.12.0"
   },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
-    "@a11y-core/core": "file:../core",
-    "@a11y-core/binding-base": "file:../binding-base"
+    "@a11y-core/core": "^1.1.0",
+    "@a11y-core/binding-base": "^0.1.0"
   },
   "peerDependencies": {
     "selenium-webdriver": ">=4.11.0"
