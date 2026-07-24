@@ -46,11 +46,11 @@ await driver.quit();
 
 The builder takes `{ driver }` (a Selenium `WebDriver`), where the Puppeteer/Playwright bindings take `{ page }` — that's the one construction difference. Everything downstream of that is identical.
 
-`results` is a11y-core's own native result shape — see [`../a11y-core/docs/OUTPUT_SCHEMA.md`](../a11y-core/docs/OUTPUT_SCHEMA.md) — not axe-core's `violations`/`passes`/`incomplete`/`inapplicable` shape. The builder's *method names* are modeled on axe-core's `AxeBuilder` for migration familiarity; the richer result schema is kept as-is.
+`results` is a11y-core's own native result shape — see [`../a11y-core/docs/OUTPUT_SCHEMA.md`](../a11y-core/docs/OUTPUT_SCHEMA.md) — not the `violations`/`passes`/`incomplete`/`inapplicable` shape used by other popular accessibility testing tools. The builder's *method names* are modeled on common conventions in this space for migration familiarity; the richer result schema is kept as-is.
 
 Also see `examples/basic-scan.js` for a runnable script (`npm run example -- <url>`).
 
-`withTags()`/`disableRules()` above have counterparts: `.withRules([...])` (only run these specific rule IDs) and `.disableTags([...])` (never run rules carrying any of these tags). All four compose the same way axe's `runOnly`/`disableRules` do, with one non-obvious rule worth knowing: a "disable" always wins over a "with" on the same ID/tag (e.g. `.withRules(['a']).disableRules(['a'])` drops `'a'` entirely), and combining `.withRules()` **and** `.withTags()` together requires a rule to satisfy *both* (a11y-core's default `includeMode: 'and'` — see `../a11y-core/docs/ENGINE_OPTIONS.md`), not either one.
+`withTags()`/`disableRules()` above have counterparts: `.withRules([...])` (only run these specific rule IDs) and `.disableTags([...])` (never run rules carrying any of these tags). All four compose the same way similar allow/deny-list options do in other accessibility testing tools, with one non-obvious rule worth knowing: a "disable" always wins over a "with" on the same ID/tag (e.g. `.withRules(['a']).disableRules(['a'])` drops `'a'` entirely), and combining `.withRules()` **and** `.withTags()` together requires a rule to satisfy *both* (a11y-core's default `includeMode: 'and'` — see `../a11y-core/docs/ENGINE_OPTIONS.md`), not either one.
 
 **Create one builder per scan.** `A11yCoreBuilder` is a mutable object with no reset between `.analyze()` calls — `include()`/`exclude()`/`withRules()`/`disableRules()`/`withTags()`/`disableTags()`/`options()`/`withCustomRules()` all push onto or merge into internal state that persists for the instance's lifetime. Calling one of them again before a second `.analyze()` call *accumulates* on top of the first scan's scope rather than replacing it (this is exactly what makes "call `.include()` several times for one scan," above, work — the same accumulation just also applies across separate scans if you reuse an instance). `.reportOnly()`/`.frames()`/`.elementRef()` are the exception: each call replaces the previous value instead of merging with it.
 
@@ -100,7 +100,7 @@ for (const frame of results.frames) {
 }
 ```
 
-Unlike axe-core (which needs a `postMessage`-based protocol to reach cross-origin iframes, since it's injected as a plain `<script>` fully subject to the browser's same-origin policy), this needs no `a11y-core` engine support at all — Selenium switches the WebDriver context into each frame at the automation-protocol level, so a cross-origin `driver.executeScript()` inside that frame already just works. Verified against a real cross-origin page (`example.org` embedded in an unrelated origin) — see `ROADMAP.md` §2c and `tests/builder.test.js`. Default off, so plain `.analyze()` is unaffected unless you opt in.
+Unlike script-injection-based accessibility tools (which need a `postMessage`-based protocol to reach cross-origin iframes, since they're injected as a plain `<script>` fully subject to the browser's same-origin policy), this needs no `a11y-core` engine support at all — Selenium switches the WebDriver context into each frame at the automation-protocol level, so a cross-origin `driver.executeScript()` inside that frame already just works. Verified against a real cross-origin page (`example.org` embedded in an unrelated origin) — see `ROADMAP.md` §2c and `tests/builder.test.js`. Default off, so plain `.analyze()` is unaffected unless you opt in.
 
 **How this differs from the Puppeteer/Playwright bindings (worth knowing):** Selenium has no `page.frames()` array of independent `Frame` objects. A frame is reached only by a *stateful context switch* — `driver.switchTo().frame(webElement)` changes what `driver.executeScript()` runs against, and `driver.switchTo().defaultContent()`/`.parentFrame()` unwind it. `.frames(true)` therefore enumerates iframes with `driver.findElements(By.css('iframe, frame'))`, switches into each (recursing into nested iframes so every frame at any depth is reached), scans, and always returns the driver to the top-level document when `analyze()` finishes — even if a scan throws partway through, so a stuck context can never break whatever you do next. The returned `{ topFrame, frames }` shape is identical to the sibling bindings'; only the internal mechanics differ. See `ROADMAP.md` §2c for the full design and its two honest limitations (nested-frame *element handles*, and genuinely detached frames).
 
@@ -141,7 +141,7 @@ This resolves `occurrence.selector` to a `WebElement` (via `driver.findElements(
 
 ### Registering a custom rule at runtime
 
-`a11y-core` supports registering additional rules per-scan via `engineOptions.customRules` (axe's `configure({ rules })` equivalent). Use `.withCustomRules()` to register one:
+`a11y-core` supports registering additional rules per-scan via `engineOptions.customRules`. Use `.withCustomRules()` to register one:
 
 ```js
 const results = await new A11yCoreBuilder({ driver })
