@@ -1,8 +1,8 @@
 'use strict';
 
 const { By } = require('selenium-webdriver');
-const { runa11yCoreInPage } = require('a11y-core');
-const { A11yCoreBuilderBase } = require('a11y-core-binding-base');
+const { runa11yCoreInPage } = require('@a11y-core/core');
+const { A11yCoreBuilderBase } = require('@a11y-core/binding-base');
 
 /**
  * Selenium WebDriver binding for a11y-core -- scans a real, already-rendered
