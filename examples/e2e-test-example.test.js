@@ -41,8 +41,8 @@ test('flags real accessibility issues (unlabeled button, missing alt)', async ()
       .analyze();
 
     const failedRuleIds = results.checksResults.map((r) => r.ruleId);
-    assert.ok(failedRuleIds.includes('a11ycore-img-alt-present'));
-    assert.ok(failedRuleIds.includes('a11ycore-button-name-present'));
+    assert.ok(failedRuleIds.includes('img-alt-present'));
+    assert.ok(failedRuleIds.includes('button-name-present'));
   } finally {
     await driver.quit();
   }
