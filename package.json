@@ -1,6 +1,6 @@
 {
   "name": "@surea11y/selenium",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "description": "Selenium WebDriver binding for surea11y -- scan real, live-rendered pages for accessibility issues.",
   "main": "src/index.js",
   "types": "src/index.d.ts",
@@ -26,8 +26,8 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@surea11y/core": "^1.0.0",
-    "@surea11y/binding-base": "^1.0.0"
+    "@surea11y/core": "^1.1.0",
+    "@surea11y/binding-base": "^1.1.0"
   },
   "peerDependencies": {
     "selenium-webdriver": ">=4.11.0"
