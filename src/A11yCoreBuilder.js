@@ -54,7 +54,7 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  * context into every frame at the automation-protocol level, not as in-page
  * script, so a cross-origin frame's executeScript() already just works --
  * verified empirically against a real cross-origin iframe (https://example.org/),
- * see ../ROADMAP.md and tests/builder.test.js.
+ * see tests/builder.test.js.
  *
  * The mechanics differ from the Puppeteer/Playwright bindings, though:
  * Selenium has no `page.frames()` array of independent Frame objects. A
@@ -66,7 +66,7 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  * recurses into nested iframes), scans, then unwinds the context, always
  * returning to the top-level document at the end even if a scan throws
  * partway (a stuck context would otherwise break whatever the caller does
- * next). See ../ROADMAP.md §2c for the full design. Default off, so plain
+ * next). Default off, so plain
  * .analyze() keeps returning the single native result object it always has.
  *
  * By default `analyze()` returns every rule's outcome, including
@@ -93,8 +93,7 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  *
  * (Note: Selenium's per-element screenshot is `WebElement.takeScreenshot()`,
  * which RETURNS a base64-encoded PNG string rather than writing a file the
- * way Puppeteer/Playwright's `elementHandle.screenshot({ path })` does --
- * see ../ROADMAP.md §2d.)
+ * way Puppeteer/Playwright's `elementHandle.screenshot({ path })` does.)
  *
  * Register your own rule(s) for just this scan with
  * `.withCustomRules([...])` (@surea11y/core's `engineOptions.customRules`

@@ -5,7 +5,7 @@
  * A11yCoreBuilder as an accessibility gate inside a real test, not just a
  * standalone script -- see basic-scan.js for that simpler case.
  *
- * Runner choice (see ../ROADMAP.md §6): plain `node:test` + `selenium-webdriver`,
+ * Runner choice: plain `node:test` + `selenium-webdriver`,
  * not a Selenium-specific test framework. Selenium has no first-party test
  * runner the way `@playwright/test` is the obvious default for Playwright
  * (the JS bindings are a pure automation library, deliberately runner-agnostic

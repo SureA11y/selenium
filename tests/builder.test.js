@@ -806,8 +806,8 @@ test('A11yCoreBuilder: elementRef(true) resolves against each frame\'s own docum
     const handle = rule.occurrences[0].elementHandle;
     assert.ok(handle, 'sub-frame occurrence should carry a live WebElement resolved against that frame');
 
-    // Selenium WebElements are CONTEXT-BOUND (verified with a real run, see
-    // ../ROADMAP.md §2d): a handle resolved inside a sub-frame is only usable
+    // Selenium WebElements are CONTEXT-BOUND (verified with a real run):
+    // a handle resolved inside a sub-frame is only usable
     // while the driver is switched into that same frame, and throws
     // NoSuchElementError from any other context. Since analyze() deliberately
     // leaves the driver back at the top-level document, using a sub-frame
@@ -829,7 +829,7 @@ test('A11yCoreBuilder: elementRef(true) resolves against each frame\'s own docum
   }
 });
 
-test('A11yCoreBuilder: frames(true) scans a genuinely cross-origin iframe (no surea11y engine support needed for this -- see ../ROADMAP.md §2c)', async () => {
+test('A11yCoreBuilder: frames(true) scans a genuinely cross-origin iframe (no surea11y engine support needed for this)', async () => {
   const driver = await buildDriver();
   try {
     // example.org is IANA-reserved specifically for use in documentation/
