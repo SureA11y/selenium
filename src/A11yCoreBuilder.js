@@ -16,15 +16,15 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  *   .options({ contrast: { mode: 'auditorAssist' } })
  *   .analyze();
  *
- * `results` is surea11y's own native result shape (checksResults /
- * rulesResults -- see surea11y's docs/OUTPUT_SCHEMA.md), not the
+ * `results` is @surea11y/core's own native result shape (checksResults /
+ * rulesResults -- see ../core/docs/OUTPUT_SCHEMA.md), not the
  * violations/passes/incomplete/inapplicable shape used by other tools in
  * this space. Method names are modeled on common conventions in this space
  * for migration ease, but the richer native schema (severity, confidence,
  * occurrences, policy contract, WCAG SC mappings) is kept as-is rather than
  * reshaped to match.
  *
- * Extends `A11yCoreBuilderBase` (from `surea11y-binding-base`), which owns
+ * Extends `A11yCoreBuilderBase` (from `@surea11y/binding-base`), which owns
  * every method with no driver-specific work at all -- `include()`/
  * `exclude()`/`withTags()`/`disableTags()`/`withRules()`/`disableRules()`/
  * `options()`/`reportOnly()`/`elementRef()`/`frames()`/`withCustomRules()`'s
@@ -33,7 +33,7 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  * boundary), and `_buildEngineArgs()`. This class adds exactly the parts
  * that are genuinely Selenium-specific: `analyze()`'s injection mechanics,
  * the stateful frame-traversal model below, and `_attachElementRefs()`. See
- * `../surea11y-binding-base/README.md` for what's shared and why.
+ * `../binding-base/README.md` for what's shared and why.
  *
  * `driver` is the object returned by `selenium-webdriver`'s `Builder`
  * pattern -- it must already be navigated to and settled at the URL to
@@ -49,7 +49,7 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  * Unlike script-injection-based accessibility engines (which need a
  * postMessage-based protocol, runPartial/finishRun, to reach cross-origin
  * iframes, since they're injected as a plain <script> and are fully subject
- * to the browser's same-origin policy), this doesn't need any surea11y
+ * to the browser's same-origin policy), this doesn't need any @surea11y/core
  * engine support: Selenium switches WebDriver
  * context into every frame at the automation-protocol level, not as in-page
  * script, so a cross-origin frame's executeScript() already just works --
@@ -70,8 +70,8 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  * .analyze() keeps returning the single native result object it always has.
  *
  * By default `analyze()` returns every rule's outcome, including
- * `pass`/`notApplicable` -- surea11y's own deliberate "not a
- * violations-only list" design (see surea11y's docs/OUTPUT_SCHEMA.md).
+ * `pass`/`notApplicable` -- @surea11y/core's own deliberate "not a
+ * violations-only list" design (see ../core/docs/OUTPUT_SCHEMA.md).
  * Opt in to a lighter payload with `.reportOnly(['fail', 'cantTell'])`,
  * which post-filters `checksResults` by `outcome` (applied per-frame when
  * combined with `.frames(true)`, since `checksResults` lives at
@@ -97,12 +97,12 @@ const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
  * see ../ROADMAP.md §2d.)
  *
  * Register your own rule(s) for just this scan with
- * `.withCustomRules([...])` (surea11y's `engineOptions.customRules`
- * escape hatch -- see surea11y's docs/ENGINE_OPTIONS.md). Pass a real,
+ * `.withCustomRules([...])` (@surea11y/core's `engineOptions.customRules`
+ * escape hatch -- see ../core/docs/ENGINE_OPTIONS.md). Pass a real,
  * live `runInPage`/
  * `applicability` function -- unlike the raw `.options({ customRules })`
  * passthrough, this method converts them to the function-source string
- * surea11y needs on this side of the executeScript() serialization
+ * @surea11y/core needs on this side of the executeScript() serialization
  * boundary for you, so you don't have to remember to call .toString()
  * yourself:
  *
@@ -143,8 +143,8 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
   }
 
   /**
-   * Runs the scan and returns surea11y's native result object.
-   * @returns {Promise<object>} see surea11y's docs/OUTPUT_SCHEMA.md
+   * Runs the scan and returns @surea11y/core's native result object.
+   * @returns {Promise<object>} see ../core/docs/OUTPUT_SCHEMA.md
    */
   async analyze() {
     const { contextSelector, engineOptions, runOnly } = this._buildEngineArgs();
@@ -161,7 +161,7 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // result object directly (it doesn't take an async callback), and
     // executeScript captures a synchronous return value while
     // executeAsyncScript would hang waiting for a callback that never fires.
-    // See surea11y's docs/INTEGRATION.md "Pattern 2" for the mirrored call.
+    // See ../core/docs/INTEGRATION.md "Pattern 2" for the mirrored call.
     const runInCurrentFrame = async () => {
       const frameUrl = this._url || (await this._safeCurrentFrameUrl());
       const result = await driver.executeScript(runa11yCoreInPage, frameUrl, contextSelector, engineOptions, runOnly);
