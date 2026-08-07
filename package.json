@@ -8,11 +8,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rumoroso/surea11y-core-selenium.git"
+    "url": "git+https://github.com/SureA11y/selenium.git"
   },
-  "homepage": "https://github.com/rumoroso/surea11y-core-selenium#readme",
+  "homepage": "https://github.com/SureA11y/selenium#readme",
   "bugs": {
-    "url": "https://github.com/rumoroso/surea11y-core-selenium/issues"
+    "url": "https://github.com/SureA11y/selenium/issues"
   },
   "engines": {
     "node": ">=20.0.0"
