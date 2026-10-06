@@ -41,7 +41,7 @@
   ],
   "dependencies": {
     "@surea11y/binding-base": "^1.1.0",
-    "@surea11y/core": "^1.5.0"
+    "@surea11y/core": "^1.10.0"
   },
   "peerDependencies": {
     "selenium-webdriver": ">=4.11.0"
