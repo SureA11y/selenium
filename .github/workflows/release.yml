@@ -56,7 +56,7 @@ jobs:
           cd "$WORKDIR"
           npm init -y >/dev/null
           npm install "$RUNNER_TEMP/$TARBALL" >/dev/null
-          node -e "const m = require('@surea11y/selenium'); for (const k of ['A11yCoreBuilder', 'formatFailures', 'EngineError']) if (typeof m[k] === 'undefined') throw new Error('missing export: ' + k)"
+          node -e "const m = require('@surea11y/selenium'); for (const k of ['A11yCoreBuilder', 'formatFailures', 'EngineError', 'getScanGaps', 'formatOccurrenceLocation']) if (typeof m[k] === 'undefined') throw new Error('missing export: ' + k)"
 
       - name: Publish to npm with provenance
         if: startsWith(github.ref, 'refs/tags/')

@@ -108,3 +108,32 @@ test('formatFailures(): works end-to-end against a real scan\'s checksResults', 
     await driver.quit();
   }
 });
+
+test('getScanGaps() and formatOccurrenceLocation() are exported, and formatFailures() given a whole result says what the scan left out', async () => {
+  const { getScanGaps, formatOccurrenceLocation } = require('../src/index.js');
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html><body><main><img src="x.png"></main></body></html>');
+
+    const results = await new A11yCoreBuilder({ driver })
+      .include('#no-such-region')
+      .withCustomRules({ id: 'broken-rule', meta: { title: 'Broken' }, runInPage: 'not a function' })
+      .analyze();
+
+    const gaps = getScanGaps(results);
+    assert.deepStrictEqual(gaps.map((g) => g.kind), ['context-not-found', 'custom-rule-skipped']);
+    assert.deepStrictEqual(gaps[0].selectors, ['#no-such-region']);
+    assert.strictEqual(gaps[1].rule.id, 'broken-rule');
+
+    // Nothing was scanned, so it must not read as a clean scan.
+    const message = formatFailures(results);
+    assert.ok(!message.includes('No accessibility violations found.'), message);
+    assert.ok(message.includes('Nothing was scanned'), message);
+    assert.ok(message.includes('"broken-rule" did not run'), message);
+    assert.ok(message.endsWith(`Scanned with @surea11y/core ${results.engine.version}.`), message);
+
+    assert.strictEqual(formatOccurrenceLocation({ selector: 'img', shadowHostSelectors: ['my-app', 'my-card'] }), 'my-app >>> my-card >>> img');
+  } finally {
+    await driver.quit();
+  }
+});
