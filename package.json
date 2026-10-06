@@ -48,7 +48,8 @@
   },
   "devDependencies": {
     "@types/selenium-webdriver": "^4.1.28",
-    "selenium-webdriver": "^4.46.0"
+    "selenium-webdriver": "^4.46.0",
+    "typescript": "^5.9.3"
   },
   "scripts": {
     "test": "node --test tests/*.test.js",
