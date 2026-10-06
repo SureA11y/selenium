@@ -35,6 +35,8 @@ await driver.quit();
 
 The builder takes `{ driver }` (a Selenium `WebDriver`), where the Puppeteer/Playwright bindings take `{ page }` — that's the one construction difference. Everything downstream of that is identical.
 
+Requires `@surea11y/core` 1.10.0 or later (installed with this package). `results.engine.version` names the core release that produced a result, such as `"1.10.0"`; quote it in a bug report.
+
 `results` is `@surea11y/core`'s own native result shape — see its [`OUTPUT_SCHEMA.md`](https://github.com/SureA11y/core/blob/main/docs/OUTPUT_SCHEMA.md) — not the `violations`/`passes`/`incomplete`/`inapplicable` shape used by other popular accessibility testing tools. The builder's *method names* are modeled on common conventions in this space for migration familiarity; the richer result schema is kept as-is.
 
 Also see `examples/basic-scan.js` for a runnable script (`npm run example -- <url>`).
@@ -42,6 +44,8 @@ Also see `examples/basic-scan.js` for a runnable script (`npm run example -- <ur
 `withTags()`/`disableRules()` above have counterparts: `.withRules([...])` (only run these specific rule IDs) and `.disableTags([...])` (never run rules carrying any of these tags). All four compose the same way similar allow/deny-list options do in other accessibility testing tools, with one non-obvious rule worth knowing: a "disable" always wins over a "with" on the same ID/tag (e.g. `.withRules(['a']).disableRules(['a'])` drops `'a'` entirely), and combining `.withRules()` **and** `.withTags()` together requires a rule to satisfy *both* (`@surea11y/core`'s default `includeMode: 'and'`), not either one.
 
 `.exclude(selector)` above excludes globally. Pass a second argument to scope it to specific rule IDs instead: `.exclude('.mat-select', { rules: ['aria-required-children'] })` skips `.mat-select` for that rule only — every other rule still sees it. Global and rule-scoped `.exclude()` calls compose freely.
+
+**A scope that matches nothing scans nothing.** Since `@surea11y/core` 1.10.0, an `.include()` selector that matches no element is not scanned: when none of them matches, every rule reports `notApplicable`, which on its own reads like a clean page. The result's `contextMatch` (`{ elementCount, unmatchedSelectors }`, or `null` without `.include()`) says how the scope resolved, and `getScanGaps(results)` lists what the scan left out: a scope that matched nothing (`context-not-found`), part of a scope that matched nothing (`context-partly-not-found`), and each custom rule that did not run (`custom-rule-skipped`, from the result's `skippedCustomRules`). `formatFailures(results)`, below, includes them.
 
 **Create one builder per scan.** `A11yCoreBuilder` is a mutable object with no reset between `.analyze()` calls — `include()`/`exclude()`/`withRules()`/`disableRules()`/`withTags()`/`disableTags()`/`options()`/`withCustomRules()` all push onto or merge into internal state that persists for the instance's lifetime. Calling one of them again before a second `.analyze()` call *accumulates* on top of the first scan's scope rather than replacing it (this is exactly what makes "call `.include()` several times for one scan," above, work — the same accumulation just also applies across separate scans if you reuse an instance). `.reportOnly()`/`.frames()`/`.elementRef()` are the exception: each call replaces the previous value instead of merging with it.
 
@@ -52,7 +56,7 @@ The pattern above works unchanged inside a real test:
 ```js
 const { Builder, Browser } = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
-const { A11yCoreBuilder, formatFailures } = require('@surea11y/selenium');
+const { A11yCoreBuilder, formatFailures, getScanGaps } = require('@surea11y/selenium');
 
 const options = new chrome.Options().addArguments('--headless=new');
 const driver = await new Builder().forBrowser(Browser.CHROME).setChromeOptions(options).build();
@@ -60,23 +64,40 @@ await driver.get('https://example.com/');
 
 const results = await new A11yCoreBuilder({ driver }).reportOnly(['fail']).analyze();
 
-assert.strictEqual(results.checksResults.length, 0, formatFailures(results.checksResults));
+assert.ok(
+  results.checksResults.length === 0 && getScanGaps(results).length === 0,
+  formatFailures(results)
+);
 ```
+
+Checking `getScanGaps()` as well keeps a scan that left something out (an `.include()` scope that matched nothing, a custom rule that did not run) from passing with zero findings.
 
 See `examples/e2e-test-example.test.js` for a fuller, runnable version (`npm run example:e2e`) — one test proving real violations get caught (unlabeled button, missing `alt`), one proving a well-formed page passes cleanly. It uses `node:test` directly rather than a dedicated test-runner package: Selenium's JS bindings are a pure automation library with no first-party test runner (the way `@playwright/test` is the default for Playwright), and `node:test` is a zero-new-dependency choice that already matches this project's own test suite.
 
 ### Readable console/CI output on failure
 
-A bare length/equality assertion alone gets you a *working* gate, but the failure message is a raw, deeply-nested object diff — hundreds of lines for a handful of violations. `formatFailures(checksResults)` turns that into a short, scannable block (one entry per occurrence, numbered, with rule ID/severity/selector/hint) that you hand to your assertion library's own failure-message parameter, as above. A real failure then prints:
+A bare length/equality assertion alone gets you a *working* gate, but the failure message is a raw, deeply-nested object diff — hundreds of lines for a handful of violations. `formatFailures(results)` turns that into a short, scannable block (one entry per occurrence, numbered, with rule ID/severity/location/hint) that you hand to your assertion library's own failure-message parameter, as above. Given a whole result, it then adds what the scan left out (see `getScanGaps()` above) and the core release that produced the result. A real failure then prints:
 
 ```
-Error: 1) button-name-present (serious): This button has no accessible name.
-   at html > body > button
+AssertionError [ERR_ASSERTION]: 1) button-name-present (serious): This button has no accessible name.
+   at html > body > main > button
    Provide visible button text or a programmatic accessible-name mechanism (for example aria-label) so assistive technologies can identify the button.
 2) img-alt-present (serious): Missing alt attribute on <img>.
-   at html > body > img
+   at html > body > main > img
    Add an alt attribute (use alt="" only for decorative images).
+
+Scanned with @surea11y/core 1.10.0.
 ```
+
+and a scan whose `.include()` scope matched nothing prints, instead of "No accessibility violations found.":
+
+```
+Nothing was scanned: the scan scope matched no element ("#main-content").
+
+Scanned with @surea11y/core 1.10.0.
+```
+
+An occurrence inside a shadow tree is located through its shadow hosts, as `my-app >>> img` (`formatOccurrenceLocation(occurrence)` gives the same string). `formatFailures(results.checksResults)` still works and prints only the findings. A `.frames(true)` result is not one scan result: format `results.topFrame` and each entry of `results.frames` that has `checksResults` on its own; given the `{ topFrame, frames }` object itself, `formatFailures()` throws a `TypeError` (as `@surea11y/core`'s reporters do since 1.10.0).
 
 Deliberately a plain function, not a custom `expect` matcher — no dependency on any particular assertion library, so it works the same with `node:assert`, Jest, Vitest, Mocha, or a hand-rolled `if`/`throw`. Defaults to `fail`/`cantTell` outcomes (the only two that ever carry occurrences); pass `{ outcomes: [...] }` to narrow further. A thrown rule (`occurrences: []`, `error` set) is still surfaced using its `error` message rather than silently dropped.
 
@@ -90,6 +111,8 @@ for (const frame of results.frames) {
   console.log(frame.checksResults.filter(r => r.outcome === 'fail'));            // each sub-frame, same result shape
 }
 ```
+
+`.include()` scopes the top frame only; each sub-frame is scanned whole, as `@surea11y/core`'s own `runa11yCoreAcrossFrames` does. The selectors name elements of the top-level page, and since core 1.10.0 a selector that matches nothing in a frame would scan nothing there. `.exclude()` applies in every frame. An invalid rule/tag selection or scope selector rejects from the top frame, before any sub-frame is scanned (see "Errors" below).
 
 Unlike script-injection-based accessibility tools (which need a `postMessage`-based protocol to reach cross-origin iframes, since they're injected as a plain `<script>` fully subject to the browser's same-origin policy), this needs no extra engine support at all — Selenium switches the WebDriver context into each frame at the automation-protocol level, so a cross-origin `driver.executeScript()` inside that frame already just works. Verified against a real cross-origin page (`example.org` embedded in an unrelated origin) — see `tests/builder.test.js`. Default off, so plain `.analyze()` is unaffected unless you opt in.
 
@@ -121,13 +144,13 @@ await failing.occurrences[0].elementHandle.click();
 const pngBase64 = await failing.occurrences[0].elementHandle.takeScreenshot();
 ```
 
-This resolves `occurrence.selector` to a `WebElement` (via `driver.findElements(By.css(...))`, the plural form, which returns `[]` rather than throwing when a selector matches nothing) instead of leaving you to re-resolve a possibly-stale selector string yourself. Default off — resolving a handle per occurrence is a real page query per occurrence, so it costs more than a plain `.analyze()`. The field is named `elementHandle` for drop-in parity with the sibling bindings, even though Selenium's type is `WebElement`.
+This resolves each occurrence to a `WebElement` in the page instead of leaving you to re-resolve a possibly-stale selector string yourself. An occurrence inside a shadow tree carries `shadowHostSelectors` (since `@surea11y/core` 1.10.0), and its `selector` holds only inside the last host's shadow root, so looking it up in the document finds another element or none; the handle is found through the hosts instead (`queryOccurrenceElement` from `@surea11y/binding-base`). It is `null` when a host or the element is missing. Default off — resolving a handle per occurrence is a real page query per occurrence, so it costs more than a plain `.analyze()`. The field is named `elementHandle` for drop-in parity with the sibling bindings, even though Selenium's type is `WebElement`.
 
 **Per-element screenshots ARE supported, but the shape differs from Puppeteer/Playwright.** Selenium's `WebElement.takeScreenshot()` **returns a base64-encoded PNG string**, where Puppeteer/Playwright's `elementHandle.screenshot({ path })` writes a file directly. Write it yourself if you want a file: `fs.writeFileSync('flagged.png', await handle.takeScreenshot(), 'base64')`. `.click()` and the rest of the `WebElement` API work as normal.
 
 **Two honest caveats, both verified against real runs:**
 
-- **Empty-selector occurrences.** Not every occurrence has one target element — a page-wide finding (some `manual`/`cantTell` rules, e.g. `contrast-enhanced`) can carry `selector: ""`. Selenium's `By.css("")` throws `InvalidSelectorError` (unlike Puppeteer/Playwright's `.$("")`, which resolves to `null`), so this binding short-circuits an empty selector to `occurrence.elementHandle = null` before it ever reaches Selenium — same `null` outcome as the sibling bindings, reached defensively.
+- **Empty-selector occurrences.** Not every occurrence has one target element — a page-wide finding (some `manual`/`cantTell` rules, e.g. `contrast-enhanced`) can carry `selector: ""`. This binding short-circuits an empty selector to `occurrence.elementHandle = null` without a round trip to the browser — same `null` outcome as the sibling bindings. (Selenium's `By.css("")` would throw `InvalidSelectorError`, so don't pass such a selector to `driver.findElements()` yourself.)
 - **Sub-frame handles are context-bound.** With `.frames(true)`, a `WebElement` for an occurrence inside a sub-frame is only usable *while the driver is switched into that frame*. Because `analyze()` deliberately returns the driver to the top-level document when it finishes, using such a handle means switching back into its frame first (`driver.switchTo().frame(iframe)`); it throws `NoSuchElementError` from any other context. The handle is valid, not dead — it revives on re-entering its frame. This is a genuine Selenium property (element references are scoped to a browsing context), with no equivalent in Puppeteer/Playwright's context-free `ElementHandle`s. The **top frame's** handles (single-frame mode, or `results.topFrame`) have no such caveat, since the top *is* the default context.
 
 ### Registering a custom rule at runtime
@@ -162,7 +185,37 @@ const results = await new A11yCoreBuilder({ driver })
 
 **Why `.withCustomRules()` instead of the raw `.options({ customRules })` passthrough** (still supported, and composes with this method if you use both): `runInPage`/`applicability` must reach the page as a function-source *string*, not a live `Function` — a Selenium `driver.executeScript()` argument crosses a serialization boundary that can't carry a live function reference, only a string `@surea11y/core` can reconstruct with `new Function` on the page side. Passing a raw live function via `.options()` directly would silently fail to serialize; `.withCustomRules()` calls `.toString()` on a live function for you (patching the ES6 method-shorthand `.toString()` quirk, where `{ runInPage(ctx){...} }` stringifies without the `function` keyword and would otherwise silently fail to revive), so you can write a normal function and not have to remember that constraint yourself. A string is still accepted as-is if you already have one.
 
-Invalid input (a missing/empty `id`, or a `runInPage`/`applicability` that's neither a function nor a non-empty string) throws immediately from `.withCustomRules()` itself, rather than surfacing later as a silently-skipped rule deep inside the page — easier to catch during development. (Note: a *raw* `.options({ customRules })` call bypasses this check entirely and defers to `@surea11y/core`'s own engine-side behavior, which silently skips an invalid descriptor rather than throwing.)
+Invalid input (a missing/empty `id`, or a `runInPage`/`applicability` that's neither a function nor a non-empty string) throws immediately from `.withCustomRules()` itself, rather than surfacing later as a skipped rule deep inside the page — easier to catch during development. (Note: a *raw* `.options({ customRules })` call bypasses this check entirely and defers to `@surea11y/core`'s own engine-side behavior, which skips an invalid descriptor rather than throwing. Since core 1.10.0 the result lists each skipped rule and why in `skippedCustomRules`, and `getScanGaps()`/`formatFailures(results)` report it.)
+
+### Errors
+
+Since `@surea11y/core` 1.10.0 the engine refuses input it can't use instead of scanning something else, and `analyze()` rejects with an `EngineError` (exported by this package) carrying a `code`:
+
+- `INVALID_RUN_ONLY`: `.withRules()`/`.withTags()` named no rule or tag the engine knows (a typo such as `.withTags(['wcag2.2aa'])`). It used to run no rule, or every rule, and pass. An unknown value next to known ones is ignored with a warning in the browser console.
+- `INVALID_CONTEXT_SELECTOR`: an `.include()` selector the browser can't parse; `err.selector` is that selector.
+
+```js
+const { A11yCoreBuilder, EngineError } = require('@surea11y/selenium');
+
+try {
+  await new A11yCoreBuilder({ driver }).withRules(['img-alt']).analyze();
+} catch (err) {
+  if (err instanceof EngineError && err.code === 'INVALID_RUN_ONLY') {
+    // fix the rule id
+  }
+  throw err;
+}
+```
+
+`.withRules()`, `.withTags()`, `.disableRules()` and `.disableTags()` throw a `TypeError` with the same `code` at the call when given a value that isn't a non-empty string (such as `undefined` from a missing config value).
+
+### Rule changes in `@surea11y/core` 1.10.0
+
+- `landmark-role-name-present` is new: an element with `role="region"` or `role="form"` and no accessible name (`cantTell`, best practice).
+- `label-title-only` is deprecated, replaced by `form-control-programmatic-label-quality`, which reports the same fields; it now always reports `notApplicable`. Drop it from `.withRules()`/`.disableRules()` lists.
+- Several manual rules now report `pass` when they applied and found nothing to review, where they reported `notApplicable`.
+
+See core's [CHANGELOG](https://github.com/SureA11y/core/blob/main/CHANGELOG.md) for the rest.
 
 ### Element addressing beyond a CSS selector
 
@@ -170,14 +223,14 @@ Every occurrence already carries `selector` and (with `.elementRef(true)`, above
 
 ## TypeScript
 
-`src/A11yCoreBuilder.d.ts` (re-exported from `src/index.d.ts`, wired up via `package.json`'s `types` field) ships hand-written types for the whole builder API plus `@surea11y/core`'s native result shapes (`A11yCoreResult`, `CheckResult`, `Occurrence`, `CompositeResult`, etc.). `analyze()` is typed `Promise<A11yCoreResult | A11yCoreMultiFrameResult>` — narrow on `'topFrame' in results` (or cast, if you already know which mode you called) to get the specific shape back, since a fluent builder can't statically track that `.frames(true)` was called earlier in the chain. `selenium-webdriver` is a `peerDependencies` entry (not just `devDependencies`) since the class's `driver` argument and `Occurrence#elementHandle` (a `WebElement`) both come from it — consumers need their own `selenium-webdriver` install for the types to resolve, same as they already do to construct a `WebDriver` in the first place. Verified with a real `tsc --strict` compile against a throwaway consumer script exercising every method and both `analyze()` return shapes.
+`src/A11yCoreBuilder.d.ts` (re-exported from `src/index.d.ts`, wired up via `package.json`'s `types` field) ships hand-written types for the whole builder API. The result shapes (`A11yCoreResult`, `CheckResult`, `Occurrence`, `CompositeResult`, etc.) are built on `@surea11y/core`'s own types, so they carry every field core declares (`engine.version`, `contextMatch`, `skippedCustomRules`, `margin`, `shadowHostSelectors`, ...); this package adds only `Occurrence#elementHandle`. `EngineError`, `getScanGaps()`, `formatOccurrenceLocation()` and `formatFailures()` are typed as `@surea11y/binding-base` declares them. `analyze()` is typed `Promise<A11yCoreResult | A11yCoreMultiFrameResult>` — narrow on `'topFrame' in results` (or cast, if you already know which mode you called) to get the specific shape back, since a fluent builder can't statically track that `.frames(true)` was called earlier in the chain. `selenium-webdriver` is a `peerDependencies` entry (not just `devDependencies`) since the class's `driver` argument and `Occurrence#elementHandle` (a `WebElement`) both come from it — consumers need their own `selenium-webdriver` install for the types to resolve, same as they already do to construct a `WebDriver` in the first place. `npm test` compiles a consumer script exercising every method and both `analyze()` return shapes with `tsc --strict` (`tests/types/usage.ts`).
 
 ## Relationship to `@surea11y/playwright` and `@surea11y/puppeteer`
 
 This binding's builder API is deliberately identical to the [Playwright](https://github.com/SureA11y/playwright) and [Puppeteer](https://github.com/SureA11y/puppeteer) bindings' — same method names, same mutability contract, same result shapes — so switching between them (or running the same accessibility gate logic against all three) is a near drop-in swap: construct a Selenium `WebDriver` instead of a Puppeteer/Playwright `Page`, pass it as `{ driver }` instead of `{ page }`, and the builder chain is unchanged. That's enforced by shared code, not just convention: `A11yCoreBuilder` here extends `A11yCoreBuilderBase` from [`@surea11y/binding-base`](https://github.com/SureA11y/binding-base), the same base class every sibling binding depends on.
 
 The real implementation differences are internal, and all Selenium-specific:
-- **The injection call** uses `driver.executeScript(runa11yCoreInPage, url, contextSelector, engineOptions, runOnly)`. Selenium's `executeScript` is variadic and, handed a function, stringifies it and runs it as `return (fn).apply(null, arguments)` — so the four positional args pass straight through, like Puppeteer's variadic `page.evaluate()` and unlike Playwright's single-arg wrapper trick. The synchronous `executeScript` (not `executeAsyncScript`) is correct, since `runa11yCoreInPage` is synchronous and returns its result directly.
+- **The injection call** uses `driver.executeScript(inPageScan, url, contextSelector, engineOptions, runOnly)`, where `inPageScan` is `runa11yCoreInPage` wrapped by `@surea11y/binding-base`'s `createInPageScan()` so an engine error's `code` survives the trip back (see "Errors"). Selenium's `executeScript` is variadic and, handed a function, stringifies it and runs it as `return (fn).apply(null, arguments)` — so the four positional args pass straight through, like Puppeteer's variadic `page.evaluate()` and unlike Playwright's single-arg wrapper trick. The synchronous `executeScript` (not `executeAsyncScript`) is correct, since `runa11yCoreInPage` is synchronous and returns its result directly.
 - **Frame handling** is a stateful `switchTo()` context walk rather than iterating a `page.frames()` array — see "Scanning every frame" above.
 - **Element refs** are context-bound `WebElement`s with a base64-string per-element screenshot rather than a file-writing one — see "Getting a live element handle" above.
 

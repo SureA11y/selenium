@@ -23,7 +23,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { Builder, Browser } = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
-const { A11yCoreBuilder, formatFailures } = require('../src/index.js');
+const { A11yCoreBuilder, formatFailures, getScanGaps } = require('../src/index.js');
 
 function buildDriver() {
   const options = new chrome.Options();
@@ -61,10 +61,16 @@ test('a well-formed page has no accessibility violations', async () => {
       .analyze();
 
     // The real assertion shape you'd use as an accessibility gate in CI --
-    // formatFailures() turns checksResults into a readable block (rule,
-    // severity, selector, hint per occurrence) instead of a bare "not equal
-    // to []" diff, so a failure is scannable straight from CI/terminal output.
-    assert.strictEqual(results.checksResults.length, 0, formatFailures(results.checksResults));
+    // formatFailures() turns the result into a readable block (rule,
+    // severity, location, hint per occurrence, then anything the scan left
+    // out and the core release) instead of a bare "not equal to []" diff, so
+    // a failure is scannable straight from CI/terminal output. The gaps
+    // count too: an include() scope that matched nothing scans nothing, and
+    // would otherwise pass with zero findings.
+    assert.ok(
+      results.checksResults.length === 0 && getScanGaps(results).length === 0,
+      formatFailures(results)
+    );
   } finally {
     await driver.quit();
   }
