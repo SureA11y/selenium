@@ -924,3 +924,31 @@ test('A11yCoreBuilder: withRules()/withTags()/disableRules()/disableTags() rejec
     }
   }
 });
+
+test('A11yCoreBuilder: include() combined with frames(true) scopes the top frame only; each sub-frame is scanned whole', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(
+      'data:text/html,<html><body>' +
+      '<main id="main"><img src="a.png" alt=""></main><img src="outside.png">' +
+      '<iframe srcdoc="%3Chtml%3E%3Cbody%3E%3Cimg src=b.png%3E%3C/body%3E%3C/html%3E"></iframe>' +
+      '</body></html>'
+    );
+    await settle();
+
+    const results = await new A11yCoreBuilder({ driver }).include('#main').frames(true).analyze();
+
+    // Top frame: only #main, so the image outside it isn't reported.
+    assert.deepStrictEqual(results.topFrame.contextMatch, { elementCount: 1, unmatchedSelectors: [] });
+    assert.strictEqual(results.topFrame.checksResults.find((r) => r.ruleId === 'img-alt-present').outcome, 'pass');
+
+    // Sub-frame: it has no #main. With the top frame's selector it would
+    // scan nothing (core 1.10.0); it is scanned whole instead.
+    assert.strictEqual(results.frames.length, 1);
+    assert.strictEqual(results.frames[0].contextSelector, null);
+    assert.strictEqual(results.frames[0].contextMatch, null);
+    assert.strictEqual(results.frames[0].checksResults.find((r) => r.ruleId === 'img-alt-present').outcome, 'fail');
+  } finally {
+    await driver.quit();
+  }
+});
