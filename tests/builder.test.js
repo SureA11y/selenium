@@ -1000,3 +1000,57 @@ test('A11yCoreBuilder: elementRef(true) leaves elementHandle null when a shadow 
     await driver.quit();
   }
 });
+
+// Collects console.warn calls made while `fn` runs.
+async function captureWarnings(fn) {
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  try {
+    await fn();
+  } finally {
+    console.warn = original;
+  }
+  return warnings;
+}
+
+test('A11yCoreBuilder: analyze() prints each scan gap with console.warn, and nothing for a scan without gaps', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html><body><main><img src="x.png"></main></body></html>');
+
+    const clean = await captureWarnings(() => new A11yCoreBuilder({ driver }).include('main').analyze());
+    assert.deepStrictEqual(clean, []);
+
+    const warnings = await captureWarnings(() => new A11yCoreBuilder({ driver }).include('#no-such-region').analyze());
+    assert.strictEqual(warnings.length, 1, warnings.join('\n'));
+    assert.match(warnings[0], /^@surea11y\/selenium \(data:text\/html,.*\): Nothing was scanned: the scan scope matched no element \("#no-such-region"\)\.$/);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: with frames(true), analyze() prints the scan gaps of each frame', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(
+      'data:text/html,<html><body>' +
+      '<iframe srcdoc="%3Chtml%3E%3Cbody%3E%3Cp%3Einner%3C/p%3E%3C/body%3E%3C/html%3E"></iframe>' +
+      '</body></html>'
+    );
+    await settle();
+
+    const warnings = await captureWarnings(() =>
+      new A11yCoreBuilder({ driver })
+        .frames(true)
+        .withCustomRules({ id: 'broken-rule', meta: { title: 'Broken' }, runInPage: 'not a function' })
+        .analyze()
+    );
+    // The custom rule is skipped in the top frame and in the sub-frame.
+    assert.strictEqual(warnings.length, 2, warnings.join('\n'));
+    assert.ok(warnings.every((w) => w.includes('Custom rule "broken-rule" did not run')), warnings.join('\n'));
+    assert.ok(warnings.some((w) => w.includes('(about:srcdoc)')), warnings.join('\n'));
+  } finally {
+    await driver.quit();
+  }
+});
