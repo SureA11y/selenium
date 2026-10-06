@@ -2,7 +2,12 @@
 
 const { By } = require('selenium-webdriver');
 const { runa11yCoreInPage } = require('@surea11y/core');
-const { A11yCoreBuilderBase, createInPageScan, rethrowEngineError } = require('@surea11y/binding-base');
+const {
+  A11yCoreBuilderBase,
+  createInPageScan,
+  rethrowEngineError,
+  queryOccurrenceElement
+} = require('@surea11y/binding-base');
 
 // core's runa11yCoreInPage, wrapped so an engine error comes back through
 // executeScript() with its `code` (see analyze()). Built once: the wrapper
@@ -287,41 +292,49 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
   }
 
   /**
-   * Resolves occurrence.selector to a live WebElement for every fail/cantTell
-   * occurrence, scoped to whatever frame the driver is currently switched
-   * into (so it composes with .frames(true) automatically -- a sub-frame's
-   * occurrences resolve against that sub-frame's own document, since this
-   * runs while the driver is still switched into that frame). Mutates and
-   * returns the same result object -- it's a fresh object from this scan, not
-   * shared external state.
+   * Resolves each occurrence to a live WebElement, scoped to whatever frame
+   * the driver is currently switched into (so it composes with
+   * .frames(true) automatically -- a sub-frame's occurrences resolve
+   * against that sub-frame's own document, since this runs while the driver
+   * is still switched into that frame). Mutates and returns the same result
+   * object -- it's a fresh object from this scan, not shared external
+   * state.
    */
   async _attachElementRefs(result) {
     if (!Array.isArray(result.checksResults)) return result;
     for (const check of result.checksResults) {
       if (!Array.isArray(check.occurrences) || !check.occurrences.length) continue;
       for (const occurrence of check.occurrences) {
-        occurrence.elementHandle = await this._resolveElement(occurrence.selector);
+        occurrence.elementHandle = await this._resolveElement(occurrence);
       }
     }
     return result;
   }
 
   /**
-   * Resolves one selector to a live WebElement (or null). Most occurrences
-   * carry a concrete element selector, but a page-wide finding with no single
-   * target element (e.g. some manual/cantTell rules) can carry "" -- Selenium's
-   * By.css("") throws InvalidSelectorError (verified with a real run), so
-   * short-circuit an empty selector to null. Uses findElements (plural),
-   * which returns [] rather than throwing NoSuchElementError when a
-   * valid-but-absent selector matches nothing, and wrap it in try/catch so an
-   * adversarial/invalid selector string resolves to null instead of aborting
-   * the whole scan.
+   * Resolves one occurrence to a live WebElement (or null). Since
+   * @surea11y/core 1.10.0 an element inside a shadow tree carries
+   * `shadowHostSelectors`, and its `selector` holds only inside the last
+   * host's shadow root: looked up in the document (as By.css() does), it
+   * finds another element or none. binding-base's queryOccurrenceElement()
+   * walks the hosts in the page instead; executeScript() hands its element
+   * back as a WebElement, and null when anything on the way is missing or a
+   * selector doesn't parse.
+   *
+   * A page-wide finding with no single target element (e.g. some
+   * manual/cantTell rules) carries selector "" -- short-circuited to null
+   * without a round trip. An error from executeScript() itself also gives
+   * null rather than aborting the whole scan.
    */
-  async _resolveElement(selector) {
-    if (!selector) return null;
+  async _resolveElement(occurrence) {
+    if (!occurrence || !occurrence.selector) return null;
     try {
-      const found = await this._driver.findElements(By.css(selector));
-      return found.length ? found[0] : null;
+      const element = await this._driver.executeScript(
+        queryOccurrenceElement,
+        occurrence.selector,
+        occurrence.shadowHostSelectors || null
+      );
+      return element || null;
     } catch (_) {
       return null;
     }
