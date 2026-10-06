@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { By } = require('selenium-webdriver');
-const { A11yCoreBuilder } = require('../src/index.js');
+const { A11yCoreBuilder, EngineError } = require('../src/index.js');
 const { buildDriver, readProp, settle } = require('./driver.js');
 
 // Shared across the customRules tests below -- reported outcome depends on
@@ -851,5 +851,76 @@ test('A11yCoreBuilder: frames(true) scans a genuinely cross-origin iframe (no su
     assert.ok(results.frames[0].checksResults.length > 0);
   } finally {
     await driver.quit();
+  }
+});
+
+// Since @surea11y/core 1.10.0 the engine throws, with a `code`, for a rule or
+// tag list that names nothing it knows and for a scope selector the browser
+// can't parse. executeScript() alone would keep only the message.
+test('A11yCoreBuilder: withRules() naming no known rule rejects with an EngineError, code INVALID_RUN_ONLY', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html><body><button></button></body></html>');
+
+    await assert.rejects(
+      new A11yCoreBuilder({ driver }).withRules(['no-such-rule']).analyze(),
+      (err) => {
+        assert.ok(err instanceof EngineError, `expected an EngineError, got ${err && err.name}: ${err && err.message}`);
+        assert.strictEqual(err.code, 'INVALID_RUN_ONLY');
+        assert.match(err.message, /no-such-rule/);
+        return true;
+      }
+    );
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: include() with a selector the browser cannot parse rejects with an EngineError, code INVALID_CONTEXT_SELECTOR', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html><body><main></main></body></html>');
+
+    await assert.rejects(
+      new A11yCoreBuilder({ driver }).include('main[').analyze(),
+      (err) => {
+        assert.ok(err instanceof EngineError, `expected an EngineError, got ${err && err.name}: ${err && err.message}`);
+        assert.strictEqual(err.code, 'INVALID_CONTEXT_SELECTOR');
+        assert.strictEqual(err.selector, 'main[');
+        return true;
+      }
+    );
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: an engine error in frames(true) mode rejects too, and leaves the driver in the top-level document', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(
+      'data:text/html,<html><body>' +
+      '<iframe srcdoc="%3Chtml%3E%3Cbody%3E%3Cbutton%3E%3C/button%3E%3C/body%3E%3C/html%3E"></iframe>' +
+      '</body></html>'
+    );
+    await settle();
+
+    await assert.rejects(
+      new A11yCoreBuilder({ driver }).frames(true).withTags(['wcag2.2aa']).analyze(),
+      (err) => err instanceof EngineError && err.code === 'INVALID_RUN_ONLY'
+    );
+    // Still at the top: the iframe is findable from here.
+    assert.strictEqual((await driver.findElements(By.css('iframe'))).length, 1);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: withRules()/withTags()/disableRules()/disableTags() reject a missing or empty value at the call', () => {
+  const builder = new A11yCoreBuilder({ driver: { executeScript: () => {} } });
+  for (const method of ['withRules', 'withTags', 'disableRules', 'disableTags']) {
+    for (const value of [undefined, '', [''], ['ok', undefined]]) {
+      assert.throws(() => builder[method](value), (err) => err instanceof TypeError && err.code === 'INVALID_RUN_ONLY', `${method}(${JSON.stringify(value)})`);
+    }
   }
 });

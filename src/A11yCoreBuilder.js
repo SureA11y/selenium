@@ -2,7 +2,12 @@
 
 const { By } = require('selenium-webdriver');
 const { runa11yCoreInPage } = require('@surea11y/core');
-const { A11yCoreBuilderBase } = require('@surea11y/binding-base');
+const { A11yCoreBuilderBase, createInPageScan, rethrowEngineError } = require('@surea11y/binding-base');
+
+// core's runa11yCoreInPage, wrapped so an engine error comes back through
+// executeScript() with its `code` (see analyze()). Built once: the wrapper
+// is self-contained, so Selenium serializes it as it would the original.
+const inPageScan = createInPageScan(runa11yCoreInPage);
 
 /**
  * Selenium WebDriver binding for surea11y -- scans a real, already-rendered
@@ -161,9 +166,19 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // executeScript captures a synchronous return value while
     // executeAsyncScript would hang waiting for a callback that never fires.
     // See ../core/docs/INTEGRATION.md "Pattern 2" for the mirrored call.
+    //
+    // It runs through inPageScan, not runa11yCoreInPage itself: a
+    // JavascriptError from executeScript() keeps an error's message but not
+    // its `code`, which is what tells INVALID_RUN_ONLY (a typo in
+    // withRules()/withTags()) or INVALID_CONTEXT_SELECTOR (include() given
+    // a selector the browser can't parse) from a broken page.
+    // rethrowEngineError() throws those again here as an EngineError with
+    // `code` (and `selector`).
     const runInCurrentFrame = async () => {
       const frameUrl = this._url || (await this._safeCurrentFrameUrl());
-      const result = await driver.executeScript(runa11yCoreInPage, frameUrl, contextSelector, engineOptions, runOnly);
+      const result = rethrowEngineError(
+        await driver.executeScript(inPageScan, frameUrl, contextSelector, engineOptions, runOnly)
+      );
       return this._elementRef ? this._attachElementRefs(result) : result;
     };
 
