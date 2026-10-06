@@ -952,3 +952,51 @@ test('A11yCoreBuilder: include() combined with frames(true) scopes the top frame
     await driver.quit();
   }
 });
+
+// A page with an image missing alt inside an open shadow root, and a
+// light-DOM image (with alt) its in-shadow selector would also match from
+// the document.
+const SHADOW_PAGE =
+  'data:text/html,' + encodeURIComponent(
+    '<html><body><main><img src="light.png" alt="Light"></main><div id="host"></div>' +
+    '<script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = \'<main><img src="shadow.png"></main>\';</script>' +
+    '</body></html>'
+  );
+
+test('A11yCoreBuilder: elementRef(true) resolves a shadow-DOM occurrence through its shadow hosts, not to a light-DOM look-alike', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(SHADOW_PAGE);
+
+    const results = await new A11yCoreBuilder({ driver }).withRules(['img-alt-present']).elementRef(true).analyze();
+    const rule = results.checksResults.find((r) => r.ruleId === 'img-alt-present');
+    assert.strictEqual(rule.outcome, 'fail');
+    assert.strictEqual(rule.occurrences.length, 1);
+    const [occurrence] = rule.occurrences;
+    assert.deepStrictEqual(occurrence.shadowHostSelectors, ['#host']);
+
+    // The selector alone, looked up in the document, finds the light-DOM image.
+    const fromDocument = await driver.findElements(By.css(occurrence.selector));
+    assert.ok(fromDocument.length > 0);
+    assert.match(await readProp(driver, fromDocument[0], 'src'), /light\.png$/);
+
+    assert.ok(occurrence.elementHandle, 'expected a WebElement for the shadow-DOM image');
+    assert.match(await readProp(driver, occurrence.elementHandle, 'src'), /shadow\.png$/);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: elementRef(true) leaves elementHandle null when a shadow host is gone', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(SHADOW_PAGE);
+
+    const builder = new A11yCoreBuilder({ driver });
+    const occurrence = { selector: 'main > img', shadowHostSelectors: ['#no-such-host'] };
+    assert.strictEqual(await builder._resolveElement(occurrence), null);
+    assert.strictEqual(await builder._resolveElement({ selector: 'main > img[', shadowHostSelectors: ['#host'] }), null);
+  } finally {
+    await driver.quit();
+  }
+});
