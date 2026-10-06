@@ -51,6 +51,8 @@ const inPageScan = createInPageScan(runa11yCoreInPage);
  * // results.topFrame        -- same shape as the single-frame case above
  * // results.frames          -- array of the same native result shape, one per sub-frame
  *
+ * include() scopes the top frame only; each sub-frame is scanned whole.
+ *
  * Unlike script-injection-based accessibility engines (which need a
  * postMessage-based protocol, runPartial/finishRun, to reach cross-origin
  * iframes, since they're injected as a plain <script> and are fully subject
@@ -174,16 +176,19 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // a selector the browser can't parse) from a broken page.
     // rethrowEngineError() throws those again here as an EngineError with
     // `code` (and `selector`).
-    const runInCurrentFrame = async () => {
+    //
+    // `scanContext` is the contextSelector for this frame: include()'s
+    // selectors in the top frame, null in a sub-frame (see scanSubFrames).
+    const runInCurrentFrame = async (scanContext) => {
       const frameUrl = this._url || (await this._safeCurrentFrameUrl());
       const result = rethrowEngineError(
-        await driver.executeScript(inPageScan, frameUrl, contextSelector, engineOptions, runOnly)
+        await driver.executeScript(inPageScan, frameUrl, scanContext, engineOptions, runOnly)
       );
       return this._elementRef ? this._attachElementRefs(result) : result;
     };
 
     if (!this._scanFrames) {
-      return this._applyReportOnly(await runInCurrentFrame());
+      return this._applyReportOnly(await runInCurrentFrame(contextSelector));
     }
 
     // Frames mode. Unlike Puppeteer/Playwright's page.frames() array of
@@ -204,6 +209,13 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // switched into a child collects nested iframes too, giving a flat list
     // of every frame at any depth -- matching what Puppeteer/Playwright's
     // page.frames() returns in one call.
+    //
+    // A sub-frame is scanned whole (contextSelector null), as core's own
+    // runa11yCoreAcrossFrames does: include()'s selectors name elements of
+    // the top-level page. Since @surea11y/core 1.10.0 a selector that
+    // matches nothing scans nothing, so passing them on would leave every
+    // frame without that element unscanned; before, it fell back to the
+    // whole frame. exclude() still applies in every frame.
     const scanSubFrames = async () => {
       let iframes;
       try {
@@ -217,7 +229,7 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
         try {
           await driver.switchTo().frame(iframe);
           switched = true;
-          frames.push(this._applyReportOnly(await runInCurrentFrame()));
+          frames.push(this._applyReportOnly(await runInCurrentFrame(null)));
           await scanSubFrames();
         } catch (e) {
           // A frame can detach/navigate away mid-scan, or be a sandboxed
@@ -243,7 +255,7 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     };
 
     try {
-      const topFrame = this._applyReportOnly(await runInCurrentFrame());
+      const topFrame = this._applyReportOnly(await runInCurrentFrame(contextSelector));
       await scanSubFrames();
       return { topFrame, frames };
     } finally {
