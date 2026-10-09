@@ -185,8 +185,13 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     //
     // `scanContext` is the contextSelector for this frame: include()'s
     // selectors in the top frame, null in a sub-frame (see scanSubFrames).
+    // The script that registers withPacks()'s packs in a frame, which the
+    // scan names in engineOptions.packs; null without packs. executeScript()
+    // runs a string as a function body, so the script runs as written.
+    const packScript = this._packScript();
     const runInCurrentFrame = async (scanContext) => {
       const frameUrl = this._url || (await this._safeCurrentFrameUrl());
+      if (packScript) await driver.executeScript(packScript);
       const result = rethrowEngineError(
         await driver.executeScript(inPageScan, frameUrl, scanContext, engineOptions, runOnly)
       );
