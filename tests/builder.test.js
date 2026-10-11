@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { By } = require('selenium-webdriver');
-const { A11yCoreBuilder, EngineError } = require('../src/index.js');
+const { A11yCoreBuilder, EngineError, getScanGaps } = require('../src/index.js');
 const { buildDriver, readProp, settle } = require('./driver.js');
 
 // Shared across the customRules tests below -- reported outcome depends on
@@ -1135,6 +1135,103 @@ test('A11yCoreBuilder: withPacks() runs the pack in every frame when combined wi
       assert.deepStrictEqual(r.engine.packs, ['@acme/a11y-rules@1.0.0']);
       assert.strictEqual(r.checksResults.find((c) => c.ruleId === 'acme-no-widget').outcome, 'fail');
     }
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: withPacks() runs the pack in a nested frame too', async () => {
+  const driver = await buildDriver();
+  try {
+    const grandchildDoc = '<div class=my-widget></div>';
+    const childDoc = `<p>child</p><iframe srcdoc="${grandchildDoc}"></iframe>`;
+    const topDoc = `<html><body><iframe srcdoc="${childDoc.replace(/"/g, '&quot;')}"></iframe></body></html>`;
+    await driver.get('data:text/html,' + encodeURIComponent(topDoc));
+    await settle();
+    const results = await new A11yCoreBuilder({ driver }).frames(true).withPacks(ACME_PACK).withRules('acme-no-widget').analyze();
+    assert.strictEqual(results.frames.length, 2);
+    const outcomes = [results.topFrame, ...results.frames].map((r) => r.checksResults.find((c) => c.ruleId === 'acme-no-widget').outcome);
+    assert.deepStrictEqual(outcomes, ['pass', 'pass', 'fail']);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: withPacks() can scan the same page twice', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html lang="en"><head><title>t</title></head><body><div class="my-widget">W</div></body></html>');
+    for (let i = 0; i < 2; i++) {
+      const result = await new A11yCoreBuilder({ driver }).withPacks(ACME_PACK).withRules('acme-no-widget').analyze();
+      assert.deepStrictEqual(result.checksResults.map((r) => [r.ruleId, r.outcome]), [['acme-no-widget', 'fail']]);
+    }
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: a pack the page does not run is a pack-skipped gap, and analyze() warns about it', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html lang="en"><head><title>t</title></head><body><img src="a.png"></body></html>');
+    let result;
+    const warnings = await captureWarnings(async () => {
+      result = await new A11yCoreBuilder({ driver }).options({ packs: ['@acme/not-registered@1.0.0'] }).withRules('img-alt-present').analyze();
+    });
+    const gaps = getScanGaps(result);
+    assert.deepStrictEqual(gaps.map((g) => [g.kind, g.pack.name]), [['pack-skipped', '@acme/not-registered@1.0.0']]);
+    assert.ok(warnings.some((w) => w.includes('Pack "@acme/not-registered@1.0.0" did not run')), warnings.join('\n'));
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: withWcag() runs a WCAG target, and withBestPractices() adds the best practices', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html lang="en"><head><title>t</title></head><body><img src="a.png"></body></html>');
+    const target = await new A11yCoreBuilder({ driver }).withWcag('2.2', 'AA').analyze();
+    const ids = target.checksResults.map((r) => r.ruleId);
+    assert.strictEqual(target.engine.wcagVersion, '2.2');
+    assert.ok(ids.includes('img-alt-present'));
+    assert.ok(!ids.includes('duplicate-id'), '4.1.1 is no part of a WCAG 2.2 target');
+    assert.ok(!ids.includes('region'));
+    const withBest = await new A11yCoreBuilder({ driver }).withWcag('2.2', 'AA').withBestPractices().analyze();
+    assert.ok(withBest.checksResults.some((r) => r.ruleId === 'region'));
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: strictOptions rejects a misspelt option with an EngineError carrying INVALID_ENGINE_OPTIONS', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html lang="en"><head><title>t</title></head><body></body></html>');
+    await assert.rejects(
+      () => new A11yCoreBuilder({ driver }).options({ strictOptions: true, lcoale: 'fr' }).analyze(),
+      (err) => err instanceof EngineError && err.code === 'INVALID_ENGINE_OPTIONS' && /lcoale/.test(err.message)
+    );
+  } finally {
+    await driver.quit();
+  }
+});
+
+test("A11yCoreBuilder: a frames(true) result goes to @surea11y/core's SARIF report with every frame's findings", async () => {
+  const { renderSarifReport } = require('@surea11y/core/sarif');
+  const driver = await buildDriver();
+  try {
+    const grandchildDoc = '<img src=grandchild.png>';
+    const childDoc = `<img src="child.png"><iframe title="Inner" srcdoc="${grandchildDoc}"></iframe>`;
+    const topDoc = '<html lang="en"><head><title>t</title></head><body><img src="top.png">' +
+      `<iframe title="Ad" srcdoc="${childDoc.replace(/"/g, '&quot;')}"></iframe></body></html>`;
+    await driver.get('data:text/html,' + encodeURIComponent(topDoc));
+    await settle();
+    const results = await new A11yCoreBuilder({ driver }).frames(true).withRules('img-alt-present').analyze();
+    const run = JSON.parse(renderSarifReport(results)).runs[0];
+    const failures = run.results.filter((r) => r.ruleId === 'img-alt-present' && r.level === 'error');
+    assert.strictEqual(failures.length, 3, JSON.stringify(failures.map((r) => r.locations)));
+    const notices = (run.invocations || []).flatMap((i) => i.toolExecutionNotifications || []);
+    assert.deepStrictEqual(notices.map((n) => n.message.text), [], 'no frame reported as not scanned');
   } finally {
     await driver.quit();
   }

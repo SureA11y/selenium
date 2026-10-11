@@ -3,8 +3,11 @@ export {
   EngineError,
   EngineErrorCode,
   OccurrenceLocation,
+  PackLike,
   ScanGap,
   ScanResultLike,
+  WcagLevel,
+  WcagVersion,
   formatFailures,
   formatOccurrenceLocation,
   getScanGaps

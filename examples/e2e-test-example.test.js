@@ -3,7 +3,8 @@
 /**
  * Demonstrates the pattern that actually matters for E2E test suites: using
  * A11yCoreBuilder as an accessibility gate inside a real test, not just a
- * standalone script -- see basic-scan.js for that simpler case.
+ * standalone script -- see basic-scan.js for that simpler case, and
+ * scan-with-pack.js for a scan against a pack.
  *
  * Runner choice: plain `node:test` + `selenium-webdriver`,
  * not a Selenium-specific test framework. Selenium has no first-party test
@@ -67,6 +68,32 @@ test('a well-formed page has no accessibility violations', async () => {
     // a failure is scannable straight from CI/terminal output. The gaps
     // count too: an include() scope that matched nothing scans nothing, and
     // would otherwise pass with zero findings.
+    assert.ok(
+      results.checksResults.length === 0 && getScanGaps(results).length === 0,
+      formatFailures(results)
+    );
+  } finally {
+    await driver.quit();
+  }
+});
+
+test("a page meets a pack's checklist (here, acme-policy-pack.js)", async () => {
+  const acmePolicy = require('./acme-policy-pack.js');
+  const driver = await buildDriver();
+  try {
+    await driver.get(
+      'data:text/html,<html lang="en"><head><title>Example</title></head>' +
+      '<body><main><h1>Hello</h1><img src="logo.png" alt="Acme"><video src="intro.mp4" autoplay muted></video></main></body></html>'
+    );
+
+    const results = await new A11yCoreBuilder({ driver })
+      .withPacks(acmePolicy)
+      .options({ profile: 'acme-web-2026' })
+      .reportOnly(['fail'])
+      .analyze();
+
+    // A pack that didn't run (its core range, or a page on another core)
+    // would otherwise pass here with nothing checked.
     assert.ok(
       results.checksResults.length === 0 && getScanGaps(results).length === 0,
       formatFailures(results)
