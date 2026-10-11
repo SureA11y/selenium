@@ -2,6 +2,7 @@
 // package writes, checked against @surea11y/core's types.
 import type { WebDriver, WebElement } from 'selenium-webdriver';
 import type { ScanResult } from '@surea11y/core';
+import { definePack } from '@surea11y/core/pack';
 import {
   A11yCoreBuilder,
   EngineError,
@@ -27,10 +28,13 @@ async function scan(): Promise<string[]> {
     const results = await new A11yCoreBuilder({ driver })
       .include('#main')
       .exclude('.ad', { rules: ['region'] })
+      .withWcag('2.2', 'AA')
+      .withBestPractices()
       .withTags(['wcag2a', 'wcag2aa'])
       .disableRules('region')
       .options({ locale: 'fr' })
       .withCustomRules({ id: 'my-rule', runInPage: () => ({ outcome: 'pass', occurrences: [] }) })
+      .withPacks(definePack({ name: '@acme/a11y-rules', version: '1.0.0', namespace: 'acme', core: '^1.11.1' }))
       .reportOnly(['fail', 'cantTell'])
       .elementRef(true)
       .analyze();
@@ -59,7 +63,9 @@ async function scan(): Promise<string[]> {
     out.push(version, String(layout), String(scope), ...skipped.map(String));
 
     for (const gap of getScanGaps(result)) {
-      out.push(gap.kind === 'custom-rule-skipped' ? gap.rule.reason : gap.selectors.join(', '));
+      if (gap.kind === 'custom-rule-skipped') out.push(gap.rule.reason);
+      else if (gap.kind === 'pack-skipped') out.push(String(gap.pack.name));
+      else out.push(gap.selectors.join(', '));
     }
 
     const check: CheckResult = result.checksResults[0];
@@ -77,6 +83,7 @@ async function scan(): Promise<string[]> {
     out.push(formatFailures(result), formatFailures(result.checksResults));
   } catch (e) {
     if (e instanceof EngineError && e.code === 'INVALID_CONTEXT_SELECTOR') out.push(String(e.selector));
+    if (e instanceof EngineError && e.code === 'INVALID_ENGINE_OPTIONS') out.push(e.message);
   }
   return out;
 }

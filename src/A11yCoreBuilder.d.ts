@@ -1,4 +1,5 @@
 import type { WebDriver, WebElement } from 'selenium-webdriver';
+import type { PackLike, WcagLevel, WcagVersion } from '@surea11y/binding-base';
 import type {
   CheckResult as CoreCheckResult,
   CompositeResult,
@@ -126,6 +127,14 @@ export class A11yCoreBuilder {
   withRules(ruleIds: string | string[]): this;
   /** Never run these specific rule IDs (applied after withRules). */
   disableRules(ruleIds: string | string[]): this;
+  /**
+   * Run the rules for a WCAG conformance target: `withWcag('2.2', 'AA')`
+   * runs those of WCAG 2.2's A and AA criteria. withTags()/withRules() add
+   * to them. A later call replaces the target.
+   */
+  withWcag(version: WcagVersion | 2.0 | 2.1 | 2.2, level?: WcagLevel): this;
+  /** Also run the best-practice rules, those that name no WCAG criterion. */
+  withBestPractices(enabled?: boolean): this;
   /** Merge arbitrary engineOptions (locale, contrast.mode, policyContract, ...). */
   options(partialEngineOptions: Record<string, unknown>): this;
   /** Register one or more custom rules for just this scan. Call multiple times to accumulate. */
@@ -134,7 +143,7 @@ export class A11yCoreBuilder {
    * Packs from `@surea11y/core/pack` (core 1.11 or later): registered in each
    * frame before the scan, and named in `engineOptions.packs`.
    */
-  withPacks(packs: object | object[]): this;
+  withPacks(packs: PackLike | PackLike[]): this;
   /** Post-filter checksResults down to only the given outcomes. */
   reportOnly(outcomes: Outcome | Outcome[]): this;
   /** Opt in to also scanning every sub-frame on the page (including cross-origin iframes). */
@@ -145,7 +154,11 @@ export class A11yCoreBuilder {
   /**
    * Runs the scan. Returns { topFrame, frames } instead of a single result
    * when .frames(true) was used. Rejects with an EngineError (with `code`)
-   * for a rule/tag selection or a scope selector the engine can't use.
+   * when the engine refuses its input: `INVALID_RUN_ONLY` (a rule/tag
+   * selection naming nothing it knows), `INVALID_CONTEXT_SELECTOR` (an
+   * include() selector the browser can't parse), `INVALID_ENGINE_OPTIONS`
+   * (an option `strictOptions: true` rejects) or `PAGE_BUILTINS_BROKEN` (the
+   * page's scripts broke a JavaScript built-in the engine relies on).
    */
   analyze(): Promise<A11yCoreResult | A11yCoreMultiFrameResult>;
 }
