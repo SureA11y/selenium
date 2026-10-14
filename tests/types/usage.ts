@@ -31,6 +31,7 @@ async function scan(): Promise<string[]> {
       .withWcag('2.2', 'AA')
       .withBestPractices()
       .includeMode('or')
+      .logger((gap, frame) => { void `${frame.url}: ${gap.kind} ${gap.message}`; })
       .withTags(['wcag2a', 'wcag2aa'])
       .disableRules('region')
       .options({ locale: 'fr' })
