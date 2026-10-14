@@ -30,6 +30,7 @@ async function scan(): Promise<string[]> {
       .exclude('.ad', { rules: ['region'] })
       .withWcag('2.2', 'AA')
       .withBestPractices()
+      .includeMode('or')
       .withTags(['wcag2a', 'wcag2aa'])
       .disableRules('region')
       .options({ locale: 'fr' })
