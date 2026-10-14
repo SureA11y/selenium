@@ -6,8 +6,7 @@ const {
   A11yCoreBuilderBase,
   createInPageScan,
   rethrowEngineError,
-  queryOccurrenceElement,
-  getScanGaps
+  queryOccurrenceElement
 } = require('@surea11y/binding-base');
 
 // core's runa11yCoreInPage, wrapped so an engine error comes back through
@@ -196,7 +195,7 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
       const result = rethrowEngineError(
         await driver.executeScript(inPageScan, frameUrl, scanContext, engineOptions, runOnly)
       );
-      this._warnScanGaps(result);
+      this._warnScanGaps(result, '@surea11y/selenium');
       return this._elementRef ? this._attachElementRefs(result) : result;
     };
 
@@ -296,27 +295,6 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
       return await this._driver.executeScript('return window.location.href;');
     } catch (_) {
       return null;
-    }
-  }
-
-  /**
-   * Prints what the scan left out (getScanGaps(): an include() scope that
-   * matched nothing, a custom rule or a pack that did not run) with
-   * console.warn, once per scanned frame. @surea11y/core warns about these
-   * too, but in the browser's console, which a Selenium run does not show; a
-   * result whose checksResults alone look clean would otherwise pass without
-   * a word.
-   */
-  _warnScanGaps(result) {
-    let gaps;
-    try {
-      gaps = getScanGaps(result);
-    } catch (e) {
-      return; // not a scan result; the caller sees it as it is
-    }
-    const where = result.url ? ` (${result.url})` : '';
-    for (const gap of gaps) {
-      console.warn(`@surea11y/selenium${where}: ${gap.message}`);
     }
   }
 
