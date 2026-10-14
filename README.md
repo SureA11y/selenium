@@ -65,7 +65,18 @@ Without `.includeMode('or')`, the same lines run no rule at all, since `contrast
 
 **A scope that matches nothing scans nothing.** Since `@surea11y/core` 1.10.0, an `.include()` selector that matches no element is not scanned: when none of them matches, every rule reports `notApplicable`, which on its own reads like a clean page. The result's `contextMatch` (`{ elementCount, unmatchedSelectors }`, or `null` without `.include()`) says how the scope resolved, and `getScanGaps(results)` lists what the scan left out: a scope that matched nothing (`context-not-found`), part of a scope that matched nothing (`context-partly-not-found`), each custom rule that did not run (`custom-rule-skipped`, from the result's `skippedCustomRules`), and each pack that did not run (`pack-skipped`, from the result's `skippedPacks`; see [Scanning with packs](#scanning-with-packs-standards-checklists-and-your-own-rules)). `formatFailures(results)`, below, includes them. `analyze()` also prints each gap with `console.warn` (per frame with `.frames(true)`), such as `@surea11y/selenium (https://example.com/): Nothing was scanned: the scan scope matched no element ("#main").`, since core's own warning goes to the browser's console, which a Selenium run doesn't show.
 
-**Create one builder per scan.** `A11yCoreBuilder` is a mutable object with no reset between `.analyze()` calls — `include()`/`exclude()`/`withRules()`/`disableRules()`/`withTags()`/`disableTags()`/`options()`/`withCustomRules()`/`withPacks()` all push onto or merge into internal state that persists for the instance's lifetime. Calling one of them again before a second `.analyze()` call *accumulates* on top of the first scan's scope rather than replacing it (this is exactly what makes "call `.include()` several times for one scan," above, work — the same accumulation just also applies across separate scans if you reuse an instance). `.reportOnly()`/`.frames()`/`.elementRef()`/`.withWcag()`/`.withBestPractices()`/`.includeMode()` are the exception: each call replaces the previous value instead of merging with it.
+That warning is the right default for a test run. A project that already handles gaps itself can take them over with `.logger(fn)`: `fn(gap, result)` is called once per gap, with the gap as `getScanGaps()` gives it and the result of the frame it came from, instead of `console.warn`. A scanning service that shows gaps to its users, say, can send them once to its own structured log, rather than also printing a loose line on the server's console for every scan:
+
+```js
+const results = await new A11yCoreBuilder({ driver })
+  .include('#checkout')
+  .logger((gap, frame) => log.warn({ url: frame.url, kind: gap.kind }, gap.message))
+  .analyze();
+```
+
+A batch job that writes `getScanGaps(results)` into its own report can pass `.logger(() => {})` to keep its output to the report, and `.logger(null)` brings `console.warn` back. Anything other than a function or `null` throws a `TypeError` at the call, and a later call replaces the logger. Either way, `getScanGaps(results)` still lists every gap.
+
+**Create one builder per scan.** `A11yCoreBuilder` is a mutable object with no reset between `.analyze()` calls — `include()`/`exclude()`/`withRules()`/`disableRules()`/`withTags()`/`disableTags()`/`options()`/`withCustomRules()`/`withPacks()` all push onto or merge into internal state that persists for the instance's lifetime. Calling one of them again before a second `.analyze()` call *accumulates* on top of the first scan's scope rather than replacing it (this is exactly what makes "call `.include()` several times for one scan," above, work — the same accumulation just also applies across separate scans if you reuse an instance). `.reportOnly()`/`.frames()`/`.elementRef()`/`.withWcag()`/`.withBestPractices()`/`.includeMode()`/`.logger()` are the exception: each call replaces the previous value instead of merging with it.
 
 ### Using it as an E2E accessibility gate
 
