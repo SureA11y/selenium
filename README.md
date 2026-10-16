@@ -8,7 +8,7 @@ A Selenium WebDriver binding for [`@surea11y/core`](https://github.com/SureA11y/
 npm install @surea11y/selenium selenium-webdriver
 ```
 
-`@surea11y/core` 1.11.1 or later comes with it as a peer dependency, as `selenium-webdriver` does: npm 7 and later, and pnpm 8 and later, install it for you, so the line above is all you need. With Yarn 1 or npm 6, which don't install peers, add `@surea11y/core` to that line.
+`@surea11y/core` 1.12.0 or later comes with it as a peer dependency, as `selenium-webdriver` does: npm 7 and later, and pnpm 8 and later, install it for you, so the line above is all you need. With Yarn 1 or npm 6, which don't install peers, add `@surea11y/core` to that line.
 
 Being a peer means your project and this binding share one copy of core. That matters as soon as your project uses core directly, to write a SARIF log or an HTML report (`@surea11y/core/sarif`, `/report`), read the rule catalogue, or keep a baseline: those read results with the same core that produced them, so a report never labels a finding with another release's rules. It holds when you bring your own core too: a linked checkout (`file:../core`), a monorepo, a fork, or a pinned release. Before 1.4.0, core was a regular dependency, and a project whose core differed from the binding's got a second copy without a word; such a project needed `"overrides": { "@surea11y/core": "$@surea11y/core" }` in its `package.json`, which it can now drop.
 
@@ -39,13 +39,13 @@ await driver.quit();
 
 The builder takes `{ driver }` (a Selenium `WebDriver`), where the Puppeteer/Playwright bindings take `{ page }` — that's the one construction difference. Everything downstream of that is identical.
 
-Requires `@surea11y/core` 1.11.1 or later (installed with this package as a peer; see [Install](#install)). `results.engine.version` names the core release that produced a result, such as `"1.11.1"`; quote it in a bug report.
+From 1.4.0 this package requires `@surea11y/core` 1.12.0 or later (installed with this package as a peer; see [Install](#install), and [What changes with `@surea11y/core` 1.12](#what-changes-with-surea11ycore-112)). `results.engine.version` names the core release that produced a result, such as `"1.12.0"`; quote it in a bug report.
 
 `results` is `@surea11y/core`'s own native result shape — see its [`OUTPUT_SCHEMA.md`](https://github.com/SureA11y/core/blob/main/docs/OUTPUT_SCHEMA.md) — not the `violations`/`passes`/`incomplete`/`inapplicable` shape used by other popular accessibility testing tools. The builder's *method names* are modeled on common conventions in this space for migration familiarity; the richer result schema is kept as-is.
 
 Also see `examples/basic-scan.js` for a runnable script (`npm run example -- <url>`).
 
-`.withWcag(version, level)` selects by conformance target: `.withWcag('2.2', 'AA')` runs the rules for WCAG 2.2's Level A and AA criteria, by the level each criterion has in that version (4.1.1 Parsing, which 2.2 removed, is part of a `'2.1'` target and not of a `'2.2'` one). `.withBestPractices()` adds the rules that name no WCAG criterion, such as `region` and `heading-order`; on its own it runs only those. `.withRules()` and `.withTags()` add to a target's rules, and the disable methods apply after. A version other than `'2.0'`, `'2.1'` or `'2.2'`, or a level other than `'A'`, `'AA'` or `'AAA'`, throws a `TypeError` with `code: 'INVALID_RUN_ONLY'` at the call. Both need `@surea11y/core` 1.11 or later.
+`.withWcag(version, level)` selects by conformance target: `.withWcag('2.2', 'AA')` runs the rules for WCAG 2.2's Level A and AA criteria, by the level each criterion has in that version (4.1.1 Parsing, which 2.2 removed, is part of a `'2.1'` target and not of a `'2.2'` one). `.withBestPractices()` adds the rules that name no WCAG criterion, such as `region` and `heading-order`; on its own it runs only those. `.withRules()` and `.withTags()` add to a target's rules, and the disable methods apply after. The level is read in any case (`'aa'` is `'AA'`). A version other than `'2.0'`, `'2.1'` or `'2.2'`, or a level other than A, AA or AAA, throws a `TypeError` with `code: 'INVALID_RUN_ONLY'` at the call. Both need `@surea11y/core` 1.11 or later.
 
 `.withTags()` and `.disableRules()` have counterparts: `.withRules([...])` (only run these specific rule IDs) and `.disableTags([...])` (never run rules carrying any of these tags). All four compose the same way similar allow/deny-list options do in other accessibility testing tools, with one non-obvious rule worth knowing: a "disable" always wins over a "with" on the same ID/tag (e.g. `.withRules(['a']).disableRules(['a'])` drops `'a'` entirely), and combining `.withRules()` **and** `.withTags()` together requires a rule to satisfy *both* (`@surea11y/core`'s default `includeMode: 'and'`), not either one, unless you ask for that with `.includeMode('or')` (below).
 
@@ -70,11 +70,21 @@ const results = await new A11yCoreBuilder({ driver })
   .analyze();
 ```
 
-Without `.wcagLevel('AA')`, that scan reports 1.4.6 as well, so a site that meets AA can show a failing AAA criterion it never aimed for. With it, the scan reports 1.4.3 alone, and `results.engine.wcagLevel` says `'AA'`. A `.withWcag()` target already implies its level; `.wcagLevel()` is for selections that don't, and wins when both are given, as it does over a level given through `.options()`. `'A'`, `'AA'` or `'AAA'` in any case is accepted. Anything else throws a `TypeError` with `code: 'INVALID_ENGINE_OPTIONS'` at the call, and `null` clears it. Needs the `@surea11y/core` release after 1.11.1.
+Without `.wcagLevel('AA')`, that scan reports 1.4.6 as well, so a site that meets AA can show a failing AAA criterion it never aimed for. With it, the scan reports 1.4.3 alone, and `results.engine.wcagLevel` says `'AA'`. A `.withWcag()` target already implies its level; `.wcagLevel()` is for selections that don't, and wins when both are given, as it does over a level given through `.options()`. `'A'`, `'AA'` or `'AAA'` in any case is accepted. Anything else throws a `TypeError` with `code: 'INVALID_ENGINE_OPTIONS'` at the call, and `null` clears it. Needs `@surea11y/core` 1.12.0 or later.
+
+`.plannedChecks()` and `.plannedCriteria()` say what a scan *will* check before you run it: the rules it runs (entries with `ruleId`) and the criteria it reports in `rulesResults` (entries with `id`), worked out in Node from the same selection and options, with no browser. Use them to record what a run covered next to its result, or to catch a selection that runs nothing, which would otherwise look like a clean scan:
+
+```js
+const builder = new A11yCoreBuilder({ driver }).withTags('forms').withRules('contrast-computable');
+if (builder.plannedChecks().length === 0) {
+  throw new Error('This selection runs no rule. Did you mean .includeMode("or")?');
+}
+const results = await builder.analyze();
+```
 
 `.exclude(selector)` above excludes globally. Pass a second argument to scope it to specific rule IDs instead: `.exclude('.mat-select', { rules: ['aria-required-children'] })` skips `.mat-select` for that rule only — every other rule still sees it. Global and rule-scoped `.exclude()` calls compose freely.
 
-**A scope that matches nothing scans nothing.** Since `@surea11y/core` 1.10.0, an `.include()` selector that matches no element is not scanned: when none of them matches, every rule reports `notApplicable`, which on its own reads like a clean page. The result's `contextMatch` (`{ elementCount, unmatchedSelectors }`, or `null` without `.include()`) says how the scope resolved, and `getScanGaps(results)` lists what the scan left out: a scope that matched nothing (`context-not-found`), part of a scope that matched nothing (`context-partly-not-found`), each custom rule that did not run (`custom-rule-skipped`, from the result's `skippedCustomRules`), and each pack that did not run (`pack-skipped`, from the result's `skippedPacks`; see [Scanning with packs](#scanning-with-packs-standards-checklists-and-your-own-rules)). `formatFailures(results)`, below, includes them. `analyze()` also prints each gap with `console.warn` (per frame with `.frames(true)`), such as `@surea11y/selenium (https://example.com/): Nothing was scanned: the scan scope matched no element ("#main").`, since core's own warning goes to the browser's console, which a Selenium run doesn't show.
+**A scope that matches nothing scans nothing.** Since `@surea11y/core` 1.10.0, an `.include()` selector that matches no element is not scanned: when none of them matches, every rule reports `notApplicable`, which on its own reads like a clean page. The result's `contextMatch` (`{ elementCount, unmatchedSelectors }`, or `null` without `.include()`) says how the scope resolved, and `getScanGaps(results)` lists what the scan left out: a scope that matched nothing (`context-not-found`), part of a scope that matched nothing (`context-partly-not-found`), each custom rule that did not run (`custom-rule-skipped`, from the result's `skippedCustomRules`; one you excluded yourself with `.disableRules()` is not a gap), and each pack that did not run (`pack-skipped`, from the result's `skippedPacks`; see [Scanning with packs](#scanning-with-packs-standards-checklists-and-your-own-rules)). `formatFailures(results)`, below, includes them. `analyze()` also prints each gap with `console.warn` (per frame with `.frames(true)`), such as `@surea11y/selenium (https://example.com/): Nothing was scanned: the scan scope matched no element ("#main").`, since core's own warning goes to the browser's console, which a Selenium run doesn't show.
 
 That warning is the right default for a test run. A project that already handles gaps itself can take them over with `.logger(fn)`: `fn(gap, result)` is called once per gap, with the gap as `getScanGaps()` gives it and the result of the frame it came from, instead of `console.warn`. A scanning service that shows gaps to its users, say, can send them once to its own structured log, rather than also printing a loose line on the server's console for every scan:
 
@@ -86,6 +96,8 @@ const results = await new A11yCoreBuilder({ driver })
 ```
 
 A batch job that writes `getScanGaps(results)` into its own report can pass `.logger(() => {})` to keep its output to the report, and `.logger(null)` brings `console.warn` back. Anything other than a function or `null` throws a `TypeError` at the call, and a later call replaces the logger. Either way, `getScanGaps(results)` still lists every gap.
+
+`getScanNotes(results)` says how the page was scanned, which a gap doesn't cover, and nothing was left out: `'forced-colors'` when the page was shown in [forced colors](#forced-colors), and `'internals-hook'` when the scan asked about web components it could have read with the [internals hook](#web-components-the-internals-hook). `analyze()` also prints the internals note, once per scan, and a `.logger()` receives it (check `kind` to tell a note from a gap).
 
 **Create one builder per scan.** `A11yCoreBuilder` is a mutable object with no reset between `.analyze()` calls — `include()`/`exclude()`/`withRules()`/`disableRules()`/`withTags()`/`disableTags()`/`options()`/`withCustomRules()`/`withPacks()` all push onto or merge into internal state that persists for the instance's lifetime. Calling one of them again before a second `.analyze()` call *accumulates* on top of the first scan's scope rather than replacing it (this is exactly what makes "call `.include()` several times for one scan," above, work — the same accumulation just also applies across separate scans if you reuse an instance). `.reportOnly()`/`.frames()`/`.elementRef()`/`.withWcag()`/`.withBestPractices()`/`.includeMode()`/`.wcagLevel()`/`.logger()` are the exception: each call replaces the previous value instead of merging with it.
 
@@ -126,7 +138,7 @@ AssertionError [ERR_ASSERTION]: 1) button-name-present (serious): This button ha
    at html > body > main > img
    Add an alt attribute that says what the image shows, or alt="" if the image is purely decorative.
 
-Scanned with @surea11y/core 1.11.1.
+Scanned with @surea11y/core 1.12.0.
 ```
 
 and a scan whose `.include()` scope matched nothing prints, instead of "No accessibility violations found.":
@@ -134,8 +146,10 @@ and a scan whose `.include()` scope matched nothing prints, instead of "No acces
 ```
 Nothing was scanned: the scan scope matched no element ("#main-content").
 
-Scanned with @surea11y/core 1.11.1.
+Scanned with @surea11y/core 1.12.0.
 ```
+
+Before the version line, it also prints the result's notes (`getScanNotes()`, above), such as `The page was shown in forced colors (high contrast); contrast findings may differ with forced colors off.`
 
 An occurrence inside a shadow tree is located through its shadow hosts, as `my-app >>> img` (`formatOccurrenceLocation(occurrence)` gives the same string). `formatFailures(results.checksResults)` still works and prints only the findings. A `.frames(true)` result is not one scan result: format `results.topFrame` and each entry of `results.frames` that has `checksResults` on its own; given the `{ topFrame, frames }` object itself, `formatFailures()` throws a `TypeError` rather than report it as clean. `@surea11y/core`'s reporters take that object whole (see [Scanning every frame](#scanning-every-frame-including-cross-origin-iframes)).
 
@@ -207,6 +221,67 @@ This resolves each occurrence to a `WebElement` in the page instead of leaving y
 - **Empty-selector occurrences.** Not every occurrence has one target element — a page-wide finding (some `manual`/`cantTell` rules, e.g. `contrast-enhanced`) can carry `selector: ""`. This binding short-circuits an empty selector to `occurrence.elementHandle = null` without a round trip to the browser — same `null` outcome as the sibling bindings. (Selenium's `By.css("")` would throw `InvalidSelectorError`, so don't pass such a selector to `driver.findElements()` yourself.)
 - **Sub-frame handles are context-bound.** With `.frames(true)`, a `WebElement` for an occurrence inside a sub-frame is only usable *while the driver is switched into that frame*. Because `analyze()` deliberately returns the driver to the top-level document when it finishes, using such a handle means switching back into its frame first (`driver.switchTo().frame(iframe)`); it throws `NoSuchElementError` from any other context. The handle is valid, not dead — it revives on re-entering its frame. This is a genuine Selenium property (element references are scoped to a browsing context), with no equivalent in Puppeteer/Playwright's context-free `ElementHandle`s. The **top frame's** handles (single-frame mode, or `results.topFrame`) have no such caveat, since the top *is* the default context.
 
+### Web components: the internals hook
+
+Many web components keep their `ElementInternals` in a private field and name themselves, set their states or give themselves a role through it:
+
+```js
+class SubscribeCheckbox extends HTMLElement {
+  #internals = this.attachInternals();
+  constructor() {
+    super();
+    this.#internals.ariaLabel = 'Subscribe';
+    this.#internals.ariaChecked = 'false';
+  }
+}
+```
+
+The browser exposes that name, but no page script can read it back, so by default the scan asks about such a component (`cantTell`) instead of judging it. A component that's a `switch` only through `this.#internals.role` isn't even asked about: the scan doesn't see its role, so it isn't checked at all.
+
+`A11yCoreBuilder.installInternalsHook(driver)` installs `@surea11y/core`'s opt-in hook, which records each component's internals for the scan to read. It has to run before the page's own scripts, which classic WebDriver can't do, so it uses:
+
+- **WebDriver BiDi** (`script.addPreloadScript`) when the session has it: Chrome, Edge and Firefox, with BiDi enabled when the driver is built;
+- otherwise, on **Chrome and Edge**, the DevTools protocol (`Page.addScriptToEvaluateOnNewDocument`).
+
+Either way it runs in every frame and after each navigation. Call it **before** `driver.get()`:
+
+```js
+const { Builder, Browser } = require('selenium-webdriver');
+const chrome = require('selenium-webdriver/chrome');
+const { A11yCoreBuilder } = require('@surea11y/selenium');
+
+const options = new chrome.Options().enableBidi(); // the webSocketUrl: true capability
+const driver = await new Builder().forBrowser(Browser.CHROME).setChromeOptions(options).build();
+
+await A11yCoreBuilder.installInternalsHook(driver); // 'bidi' (or 'cdp' without BiDi on Chrome)
+await driver.get('https://example.com/');
+
+const results = await new A11yCoreBuilder({ driver }).analyze();
+results.engine.environment.internalsHook; // 'early': the hook ran before the page's scripts
+```
+
+With it, the checkbox above passes, an unnamed component that attaches internals fails like any unnamed control, and the switch is checked as a switch, so it fails without a name. It resolves to `'bidi'` or `'cdp'`, the way it was installed.
+
+- **A classic session on another browser** (Safari, or Firefox without BiDi) has no way to run a script before the page loads: the call rejects, saying how to enable BiDi. There, such components stay questions, and roles set through internals aren't checked.
+- **Before the page loads.** On a page that's already loaded, the call has no effect until the next navigation (a refresh will do), and the result has no `internalsHook`.
+- **For test and audit runs.** The hook wraps `HTMLElement.prototype.attachInternals` (components get the same internals back), adds a stack frame to errors thrown through it, and keeps its record under a global symbol, where any script on the page can read every component's internals. That's why it's opt-in.
+- **Without it**, `analyze()` says so once per scan when it asked about such components (`1 custom element was asked about because the scan could not read...`), and `getScanNotes()` gives that note as `kind: 'internals-hook'`.
+
+### Forced colors
+
+A page shown in forced colors (Windows high contrast) draws in the user's colors, not its own. `results.engine.environment.forcedColors` says which it was: `'active'` or `'none'`. To check a page under forced colors on purpose in Chrome or Edge, emulate it through the DevTools protocol before scanning:
+
+```js
+await driver.sendDevToolsCommand('Emulation.setEmulatedMedia', {
+  features: [{ name: 'forced-colors', value: 'active' }]
+});
+await driver.get('https://example.com/');
+const results = await new A11yCoreBuilder({ driver }).analyze();
+results.engine.environment.forcedColors; // 'active'
+```
+
+Selenium offers no way to emulate it in Firefox or Safari. The contrast rules still measure the page's own colors under forced colors, since WCAG judges contrast in those, so results match a scan with forced colors off; a contrast finding the engine couldn't measure that way carries `details.forcedColors: true`. When forced colors were active, `formatFailures()` adds a line saying so, since it's easy to miss on a CI agent with high contrast turned on.
+
 ### Registering a custom rule at runtime
 
 `@surea11y/core` supports registering additional rules per-scan via `engineOptions.customRules`. Use `.withCustomRules()` to register one:
@@ -238,6 +313,8 @@ const results = await new A11yCoreBuilder({ driver })
 ```
 
 **Why `.withCustomRules()` instead of the raw `.options({ customRules })` passthrough** (still supported, and composes with this method if you use both): `runInPage`/`applicability` must reach the page as a function-source *string*, not a live `Function` — a Selenium `driver.executeScript()` argument crosses a serialization boundary that can't carry a live function reference, only a string `@surea11y/core` can reconstruct with `new Function` on the page side. Passing a raw live function via `.options()` directly would silently fail to serialize; `.withCustomRules()` calls `.toString()` on a live function for you (patching the ES6 method-shorthand `.toString()` quirk, where `{ runInPage(ctx){...} }` stringifies without the `function` keyword and would otherwise silently fail to revive), so you can write a normal function and not have to remember that constraint yourself. A string is still accepted as-is if you already have one.
+
+A custom rule you turn off for one scan (`.withCustomRules(rules).disableRules('org-banner-text')`) is listed in `skippedCustomRules` with `excluded: true` and isn't a scan gap, so it isn't warned about (core 1.12.0 and later).
 
 Invalid input (a missing/empty `id`, or a `runInPage`/`applicability` that's neither a function nor a non-empty string) throws immediately from `.withCustomRules()` itself, rather than surfacing later as a skipped rule deep inside the page — easier to catch during development. (Note: a *raw* `.options({ customRules })` call bypasses this check entirely and defers to `@surea11y/core`'s own engine-side behavior, which skips an invalid descriptor rather than throwing. Since core 1.10.0 the result lists each skipped rule and why in `skippedCustomRules`, and `getScanGaps()`/`formatFailures(results)` report it.)
 
@@ -313,7 +390,23 @@ Every occurrence already carries `selector` and (with `.elementRef(true)`, above
 
 ## TypeScript
 
-`src/A11yCoreBuilder.d.ts` (re-exported from `src/index.d.ts`, wired up via `package.json`'s `types` field) ships hand-written types for the whole builder API. The result shapes (`A11yCoreResult`, `CheckResult`, `Occurrence`, `CompositeResult`, etc.) are built on `@surea11y/core`'s own types, so they carry every field core declares (`engine.version`, `contextMatch`, `skippedCustomRules`, `margin`, `shadowHostSelectors`, ...); this package adds only `Occurrence#elementHandle`. `EngineError`, `getScanGaps()`, `formatOccurrenceLocation()` and `formatFailures()` are typed as `@surea11y/binding-base` declares them, and so are `withWcag()` (`WcagVersion`, `WcagLevel`) and `withPacks()`, which takes a pack made with `definePack` (`PackLike`). Code that handles every `ScanGap` kind it knows and treats the rest in an `else` branch needs a branch for `'pack-skipped'`, which carries `pack` rather than `selectors`. `analyze()` is typed `Promise<A11yCoreResult | A11yCoreMultiFrameResult>` — narrow on `'topFrame' in results` (or cast, if you already know which mode you called) to get the specific shape back, since a fluent builder can't statically track that `.frames(true)` was called earlier in the chain. `selenium-webdriver` is a `peerDependencies` entry (not just `devDependencies`) since the class's `driver` argument and `Occurrence#elementHandle` (a `WebElement`) both come from it — consumers need their own `selenium-webdriver` install for the types to resolve, same as they already do to construct a `WebDriver` in the first place. `npm test` compiles a consumer script exercising every method and both `analyze()` return shapes with `tsc --strict` (`tests/types/usage.ts`).
+`src/A11yCoreBuilder.d.ts` (re-exported from `src/index.d.ts`, wired up via `package.json`'s `types` field) ships hand-written types for the whole builder API. The result shapes (`A11yCoreResult`, `CheckResult`, `Occurrence`, `CompositeResult`, etc.) are built on `@surea11y/core`'s own types, so they carry every field core declares (`engine.version`, `contextMatch`, `skippedCustomRules`, `margin`, `shadowHostSelectors`, ...); this package adds only `Occurrence#elementHandle`. `EngineError`, `getScanGaps()`, `getScanNotes()`, `formatOccurrenceLocation()` and `formatFailures()` are typed as `@surea11y/binding-base` declares them, and so are `withWcag()` and `wcagLevel()` (`WcagVersion`, `WcagLevelInput`), `plannedChecks()`/`plannedCriteria()` (`PlannedCheck`, `PlannedCriterion`), the static `installInternalsHook()`, and `withPacks()`, which takes a pack made with `definePack` (`PackLike`). Code that handles every `ScanGap` kind it knows and treats the rest in an `else` branch needs a branch for `'pack-skipped'`, which carries `pack` rather than `selectors`. `analyze()` is typed `Promise<A11yCoreResult | A11yCoreMultiFrameResult>` — narrow on `'topFrame' in results` (or cast, if you already know which mode you called) to get the specific shape back, since a fluent builder can't statically track that `.frames(true)` was called earlier in the chain. `selenium-webdriver` is a `peerDependencies` entry (not just `devDependencies`) since the class's `driver` argument and `Occurrence#elementHandle` (a `WebElement`) both come from it — consumers need their own `selenium-webdriver` install for the types to resolve, same as they already do to construct a `WebDriver` in the first place. `npm test` compiles a consumer script exercising every method and both `analyze()` return shapes with `tsc --strict` (`tests/types/usage.ts`).
+
+## What changes with `@surea11y/core` 1.12
+
+This release needs `@surea11y/core` 1.12.0. What a scan through this binding shows differently (core's [`CHANGELOG.md`](https://github.com/SureA11y/core/blob/main/CHANGELOG.md) has the full list):
+
+- **An empty heading now fails an unscoped scan.** `empty-heading` used to ask about a heading with no accessible name; it now fails it. It's a best practice, so it runs in a scan that selects nothing and with `.withBestPractices()`, not under `.withWcag()`, tags or a profile. A gate on a page with `<h2></h2>` that asserted no failures now fails: fix the heading, or scan a WCAG target.
+- **Scans that pick rules report their criteria.** `.withRules('img-alt-present')`, a non-WCAG tag or `.withBestPractices()` now fill `rulesResults` with the WCAG criteria those rules belong to, where it was empty. A criterion whose other rules weren't selected is `cantTell` (`reasonCode` `composite.rollup.cantTell.notSelectedChild`), and each check's `rollupIds` names the criteria it was added for. `.wcagLevel()` keeps those criteria to a level.
+- **Four rules count towards more criteria**, as W3C's ACT rules map them: `input-image-alt-present` adds 4.1.2, `aria-roles-valid` 1.3.1, `link-name-present` 2.4.9 (AAA), and `meta-refresh-timing-absent` 2.2.4 and 3.2.5 (AAA). The findings don't change; the 1.3.1 and 4.1.2 rollups can now fail where they passed.
+- **Unnamed custom elements are questions.** A defined custom element with no visible name may name itself through `ElementInternals`, so it's `cantTell` (`name_internals`) where it used to fail. [`installInternalsHook()`](#web-components-the-internals-hook) lets the engine decide, where the session allows it.
+- **`engine.wcagLevel`** records the level a scan was gated by, and [`.wcagLevel()`](#usage) sets it.
+- **`engine.environment.forcedColors`** records whether the page was in [forced colors](#forced-colors).
+- **A custom rule you exclude** isn't a scan gap any more, so `.disableRules()` of one prints no warning.
+- **Rule IDs in another case select their rule**: `.withRules('IMG-ALT-PRESENT')` used to throw `INVALID_RUN_ONLY` or be ignored.
+- **`runOnly.optInTags` on its own throws** `INVALID_RUN_ONLY`; it was accepted and did nothing. Opt-in rules are unlocked with `.options({ optInRules })`.
+- **A finding in a shadow tree is located through its hosts**, as `#card >>> img`, in core's HTML report, SARIF, JUnit and baselines, as `formatFailures()` already did.
+- **An inline `policyContract`** with an unknown value in `allowedOutcomes` or `allowedConfidence` drops that value with a warning, where it turned every check into `cantTell`.
 
 ## What changes with `@surea11y/core` 1.11
 

@@ -8,7 +8,8 @@ import {
   EngineError,
   formatFailures,
   formatOccurrenceLocation,
-  getScanGaps
+  getScanGaps,
+  getScanNotes
 } from '../../src/index';
 import type {
   A11yCoreFrameError,
@@ -25,6 +26,11 @@ declare const driver: WebDriver;
 async function scan(): Promise<string[]> {
   const out: string[] = [];
   try {
+    const how: 'bidi' | 'cdp' = await A11yCoreBuilder.installInternalsHook(driver);
+    out.push(how);
+    const planned = new A11yCoreBuilder({ driver }).withWcag('2.2', 'aa').wcagLevel('aa');
+    out.push(...planned.plannedChecks().map((c) => c.ruleId), ...planned.plannedCriteria().map((r) => r.id));
+
     const results = await new A11yCoreBuilder({ driver })
       .include('#main')
       .exclude('.ad', { rules: ['region'] })
@@ -32,7 +38,7 @@ async function scan(): Promise<string[]> {
       .withBestPractices()
       .includeMode('or')
       .wcagLevel('AA')
-      .logger((gap, frame) => { void `${frame.url}: ${gap.kind} ${gap.message}`; })
+      .logger((entry, frame) => { void `${frame.url}: ${entry.kind} ${entry.message}`; })
       .withTags(['wcag2a', 'wcag2aa'])
       .disableRules('region')
       .options({ locale: 'fr' })
@@ -64,6 +70,11 @@ async function scan(): Promise<string[]> {
     const scope: number | undefined = result.contextMatch?.elementCount;
     const skipped: Array<string | null> = result.skippedCustomRules.map((r) => r.id);
     out.push(version, String(layout), String(scope), ...skipped.map(String));
+
+    for (const note of getScanNotes(result)) {
+      if (note.kind === 'internals-hook') out.push(String(note.elementCount));
+      else out.push(note.message);
+    }
 
     for (const gap of getScanGaps(result)) {
       if (gap.kind === 'custom-rule-skipped') out.push(gap.rule.reason);

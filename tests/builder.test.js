@@ -1265,3 +1265,179 @@ test("A11yCoreBuilder: a frames(true) result goes to @surea11y/core's SARIF repo
     await driver.quit();
   }
 });
+
+// --- @surea11y/core 1.12 -------------------------------------------------------------
+
+// Web components that keep their ElementInternals in a private field, where
+// no script but the internals hook can read them: one names itself and sets
+// its state, one is a switch only through its internals, with no name, and
+// one is the same switch named through its internals.
+const COMPONENTS_SCRIPT = `<script>
+customElements.define('x-check', class extends HTMLElement {
+  #i; constructor() { super(); this.#i = this.attachInternals(); this.#i.ariaLabel = 'Subscribe'; this.#i.ariaChecked = 'false'; }
+});
+customElements.define('x-toggle', class extends HTMLElement {
+  #i; constructor() { super(); this.#i = this.attachInternals(); this.#i.role = 'switch'; }
+});
+customElements.define('x-named-toggle', class extends HTMLElement {
+  #i; constructor() { super(); this.#i = this.attachInternals(); this.#i.role = 'switch'; this.#i.ariaLabel = 'Dark mode'; }
+});
+</script>`;
+
+function componentPage(body) {
+  return 'data:text/html,' + encodeURIComponent(
+    `<!doctype html><html lang="en"><head><title>t</title>${COMPONENTS_SCRIPT}</head><body><main><h1>Hi</h1>${body}</main></body></html>`
+  );
+}
+
+function srcdoc(html) {
+  return html.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+function outcomeOf(result, ruleId) {
+  const check = result.checksResults.find((r) => r.ruleId === ruleId);
+  return check ? check.outcome : undefined;
+}
+
+test('A11yCoreBuilder: wcagLevel() reaches the engine: a contrast check at AA reports 1.4.3 and no 1.4.6', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html lang="en"><head><title>t</title></head><body><main><h1>Hi</h1><p>Text</p></main></body></html>');
+    const results = await new A11yCoreBuilder({ driver }).withRules('contrast-computable').wcagLevel('aa').analyze();
+    assert.strictEqual(results.engine.wcagLevel, 'AA');
+    assert.deepStrictEqual(results.rulesResults.map((r) => r.ruleId), ['wcag-1.4.3-contrast-minimum']);
+    assert.deepStrictEqual(results.checksResults.map((r) => r.ruleId), ['contrast-computable']);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: a scan under forced colors emulated through the DevTools protocol records engine.environment.forcedColors', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.sendDevToolsCommand('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    await driver.get('data:text/html,<html lang="en"><head><title>t</title></head><body><main><h1>Hi</h1></main></body></html>');
+    const results = await new A11yCoreBuilder({ driver }).withRules('contrast-minimum').analyze();
+    assert.strictEqual(results.engine.environment.forcedColors, 'active');
+
+    await driver.sendDevToolsCommand('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'none' }] });
+    const plain = await new A11yCoreBuilder({ driver }).withRules('contrast-minimum').analyze();
+    assert.strictEqual(plain.engine.environment.forcedColors, 'none');
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder.installInternalsHook(): in a BiDi session, a component named through private internals is a question without it, and passes with it, in every frame', async () => {
+  const inner = `<!doctype html><html lang="en"><head><title>f</title>${COMPONENTS_SCRIPT}</head><body><x-check role="checkbox"></x-check></body></html>`;
+  const url = componentPage(`<x-check role="checkbox"></x-check><iframe title="Form" srcdoc="${srcdoc(inner)}"></iframe>`);
+
+  const plain = await buildDriver(undefined, { bidi: true });
+  try {
+    await plain.get(url);
+    const before = await new A11yCoreBuilder({ driver: plain }).logger(() => {}).analyze();
+    assert.strictEqual(outcomeOf(before, 'binary-control-name-present'), 'cantTell');
+    assert.strictEqual(before.engine.environment.internalsHook, undefined);
+  } finally {
+    await plain.quit();
+  }
+
+  const driver = await buildDriver(undefined, { bidi: true });
+  try {
+    assert.strictEqual(await A11yCoreBuilder.installInternalsHook(driver), 'bidi');
+    await driver.get(url);
+    await settle();
+    const results = await new A11yCoreBuilder({ driver }).frames(true).analyze();
+    for (const frame of [results.topFrame, ...results.frames]) {
+      assert.strictEqual(frame.engine.environment.internalsHook, 'early', frame.url);
+      assert.strictEqual(outcomeOf(frame, 'binary-control-name-present'), 'pass', frame.url);
+    }
+    assert.strictEqual(results.frames.length, 1);
+    assert.strictEqual(outcomeOf(results.topFrame, 'aria-required-attr'), 'pass');
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder.installInternalsHook(): without BiDi, Chrome gets it through the DevTools protocol, and a switch set only through internals is checked as one', async () => {
+  const plain = await buildDriver();
+  try {
+    await plain.get(componentPage('<x-toggle></x-toggle>'));
+    const before = await new A11yCoreBuilder({ driver: plain }).withRules('binary-control-name-present').analyze();
+    assert.strictEqual(outcomeOf(before, 'binary-control-name-present'), 'notApplicable', 'without the hook the role is not seen');
+  } finally {
+    await plain.quit();
+  }
+
+  const driver = await buildDriver();
+  try {
+    assert.strictEqual(await A11yCoreBuilder.installInternalsHook(driver), 'cdp');
+    await driver.get(componentPage('<x-toggle></x-toggle>'));
+    const unnamed = await new A11yCoreBuilder({ driver }).withRules('binary-control-name-present').analyze();
+    assert.strictEqual(unnamed.engine.environment.internalsHook, 'early');
+    assert.strictEqual(outcomeOf(unnamed, 'binary-control-name-present'), 'fail');
+
+    await driver.get(componentPage('<x-named-toggle></x-named-toggle>'));
+    const named = await new A11yCoreBuilder({ driver }).withRules('binary-control-name-present').analyze();
+    assert.strictEqual(outcomeOf(named, 'binary-control-name-present'), 'pass');
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder.installInternalsHook(): called after driver.get(), the loaded page has no hook; the next navigation has it', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(componentPage('<x-check role="checkbox"></x-check>'));
+    await A11yCoreBuilder.installInternalsHook(driver);
+    const loaded = await new A11yCoreBuilder({ driver }).logger(() => {}).analyze();
+    assert.strictEqual(loaded.engine.environment.internalsHook, undefined);
+
+    await driver.navigate().refresh();
+    const reloaded = await new A11yCoreBuilder({ driver }).analyze();
+    assert.strictEqual(reloaded.engine.environment.internalsHook, 'early');
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder.installInternalsHook() rejects a session with no before-load script, saying how to enable BiDi', async () => {
+  // A classic session on a browser with no DevTools protocol: no
+  // webSocketUrl capability, no sendDevToolsCommand().
+  const classic = { getCapabilities: async () => new Map([['browserName', 'safari']]) };
+  await assert.rejects(() => A11yCoreBuilder.installInternalsHook(classic), /no way to run a script before the page loads.*enableBidi\(\)/);
+  for (const bad of [undefined, null, {}, { executeScript() {} }]) {
+    await assert.rejects(() => A11yCoreBuilder.installInternalsHook(bad), TypeError);
+  }
+});
+
+test('A11yCoreBuilder: without the hook, analyze() says once per scan that it would let the engine read those components', async (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => { warnings.push(String(msg)); });
+  const driver = await buildDriver();
+  try {
+    const inner = `<!doctype html><html lang="en"><head><title>f</title>${COMPONENTS_SCRIPT}</head><body><x-check role="checkbox"></x-check></body></html>`;
+    await driver.get(componentPage(`<x-check role="checkbox"></x-check><iframe title="Form" srcdoc="${srcdoc(inner)}"></iframe>`));
+    await settle();
+    await new A11yCoreBuilder({ driver }).frames(true).analyze();
+    const notes = warnings.filter((w) => /custom element was asked about/.test(w));
+    assert.strictEqual(notes.length, 1, JSON.stringify(warnings));
+    assert.match(notes[0], /^@surea11y\/selenium \(data:text\/html,.*installInternalsHook\(\)/);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder: plannedChecks() and plannedCriteria() list what analyze() then reports', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get('data:text/html,<html lang="en"><head><title>t</title></head><body><main><h1>Hi</h1><img src="a.png"></main></body></html>');
+    const builder = new A11yCoreBuilder({ driver }).withWcag('2.2', 'AA');
+    const results = await builder.analyze();
+    const ids = (list, key) => list.map((e) => e[key]).sort();
+    assert.deepStrictEqual(ids(builder.plannedChecks(), 'ruleId'), ids(results.checksResults, 'ruleId'));
+    assert.deepStrictEqual(ids(builder.plannedCriteria(), 'id'), ids(results.rulesResults, 'ruleId'));
+  } finally {
+    await driver.quit();
+  }
+});

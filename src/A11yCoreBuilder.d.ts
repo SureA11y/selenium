@@ -1,5 +1,5 @@
 import type { WebDriver, WebElement } from 'selenium-webdriver';
-import type { PackLike, WcagLevel, WcagVersion } from '@surea11y/binding-base';
+import type { PackLike, WcagLevelInput, WcagVersion, ScanGap, ScanNote, PlannedCheck, PlannedCriterion } from '@surea11y/binding-base';
 import type {
   CheckResult as CoreCheckResult,
   CompositeResult,
@@ -105,6 +105,15 @@ export class A11yCoreBuilder {
   constructor(opts: { driver: WebDriver; url?: string });
 
   /**
+   * Installs @surea11y/core's opt-in internals hook, so a scan can read
+   * names, states and roles web components set through a private
+   * ElementInternals. Call it before driver.get(). Uses WebDriver BiDi when
+   * the session has it, else the DevTools protocol on Chrome and Edge, else
+   * rejects. Resolves to the way it was installed.
+   */
+  static installInternalsHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
+
+  /**
    * Scope the scan to one region. Call multiple times for a multi-region
    * union. A selector that matches nothing scans nothing (see the result's
    * `contextMatch`); one the browser can't parse makes analyze() reject with
@@ -132,7 +141,7 @@ export class A11yCoreBuilder {
    * runs those of WCAG 2.2's A and AA criteria. withTags()/withRules() add
    * to them. A later call replaces the target.
    */
-  withWcag(version: WcagVersion | 2.0 | 2.1 | 2.2, level?: WcagLevel): this;
+  withWcag(version: WcagVersion | 2.0 | 2.1 | 2.2, level?: WcagLevelInput): this;
   /** Also run the best-practice rules, those that name no WCAG criterion. */
   withBestPractices(enabled?: boolean): this;
   /**
@@ -146,13 +155,14 @@ export class A11yCoreBuilder {
    * rules run: `.withRules('contrast-computable').wcagLevel('AA')` reports
    * 1.4.3 and not 1.4.6. Any case; null clears it. A later call replaces it.
    */
-  wcagLevel(level: WcagLevel | 'a' | 'aa' | 'aaa' | null): this;
+  wcagLevel(level: WcagLevelInput | null): this;
   /**
    * Where analyze() sends each scan gap instead of console.warn: called once
-   * per gap, with the result of the frame it came from. `() => {}` silences
-   * them, `null` goes back to console.warn. A later call replaces it.
+   * per gap, with the result of the frame it came from, and once per scan
+   * for the internals-hook note (tell them apart by `kind`). `() => {}`
+   * silences them, `null` goes back to console.warn. A later call replaces it.
    */
-  logger(fn: ((gap: import('@surea11y/binding-base').ScanGap, result: A11yCoreResult) => void) | null): this;
+  logger(fn: ((entry: ScanGap | ScanNote, result: A11yCoreResult) => void) | null): this;
   /** Merge arbitrary engineOptions (locale, contrast.mode, policyContract, ...). */
   options(partialEngineOptions: Record<string, unknown>): this;
   /** Register one or more custom rules for just this scan. Call multiple times to accumulate. */
@@ -168,6 +178,10 @@ export class A11yCoreBuilder {
   frames(enabled?: boolean): this;
   /** Opt in to resolving each fail/cantTell occurrence's selector to a live WebElement. */
   elementRef(enabled?: boolean): this;
+  /** The rules this scan will run, worked out in Node with no page (@surea11y/core 1.12.0 and later). */
+  plannedChecks(): PlannedCheck[];
+  /** The criteria this scan will report in rulesResults, worked out in Node with no page. */
+  plannedCriteria(): PlannedCriterion[];
 
   /**
    * Runs the scan. Returns { topFrame, frames } instead of a single result

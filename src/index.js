@@ -2,6 +2,6 @@
 
 const { A11yCoreBuilder } = require('./A11yCoreBuilder');
 const { formatFailures } = require('./formatFailures');
-const { EngineError, getScanGaps, formatOccurrenceLocation } = require('@surea11y/binding-base');
+const { EngineError, getScanGaps, getScanNotes, formatOccurrenceLocation } = require('@surea11y/binding-base');
 
-module.exports = { A11yCoreBuilder, formatFailures, EngineError, getScanGaps, formatOccurrenceLocation };
+module.exports = { A11yCoreBuilder, formatFailures, EngineError, getScanGaps, getScanNotes, formatOccurrenceLocation };

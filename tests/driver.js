@@ -11,10 +11,13 @@
 const { Builder, Browser } = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 
-async function buildDriver(browserName = Browser.CHROME) {
+// `{ bidi: true }` opens a WebDriver BiDi session (the webSocketUrl
+// capability), as installInternalsHook() prefers.
+async function buildDriver(browserName = Browser.CHROME, { bidi = false } = {}) {
   if (browserName === Browser.CHROME) {
     const options = new chrome.Options();
     options.addArguments('--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage');
+    if (bidi) options.enableBidi();
     return new Builder().forBrowser(Browser.CHROME).setChromeOptions(options).build();
   }
   return new Builder().forBrowser(browserName).build();
