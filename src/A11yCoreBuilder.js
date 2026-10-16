@@ -1,7 +1,7 @@
 'use strict';
 
 const { By } = require('selenium-webdriver');
-const { runa11yCoreInPage } = require('@surea11y/core');
+const { runa11yCoreInPage, internalsHookScript } = require('@surea11y/core');
 const {
   A11yCoreBuilderBase,
   createInPageScan,
@@ -141,6 +141,49 @@ const inPageScan = createInPageScan(runa11yCoreInPage);
  * it.
  */
 class A11yCoreBuilder extends A11yCoreBuilderBase {
+  /**
+   * Installs @surea11y/core's opt-in internals hook, so a scan can read the
+   * names, states and roles web components set through a private
+   * ElementInternals. Call it before driver.get(). Classic WebDriver can't
+   * run a script before a page's own, so it uses:
+   *
+   * - WebDriver BiDi's script.addPreloadScript, when the session has BiDi
+   *   (options.enableBidi(), the `webSocketUrl` capability): Chrome, Edge
+   *   and Firefox;
+   * - otherwise, on Chrome and Edge, the DevTools protocol's
+   *   Page.addScriptToEvaluateOnNewDocument (driver.sendDevToolsCommand()).
+   *
+   * Both run the script in every frame of the page, before its scripts, and
+   * after each navigation. Any other session gets an error saying how to
+   * enable BiDi. Resolves to the way it was installed, 'bidi' or 'cdp'.
+   * @param {import('selenium-webdriver').WebDriver} driver
+   * @returns {Promise<'bidi' | 'cdp'>}
+   */
+  static async installInternalsHook(driver) {
+    if (!driver || typeof driver.getCapabilities !== 'function') {
+      throw new TypeError('A11yCoreBuilder.installInternalsHook() requires a Selenium WebDriver.');
+    }
+    const source = internalsHookScript();
+    const capabilities = await driver.getCapabilities();
+    const webSocketUrl = capabilities && typeof capabilities.get === 'function' ? capabilities.get('webSocketUrl') : undefined;
+    if (typeof webSocketUrl === 'string' && webSocketUrl) {
+      // selenium-webdriver's BiDi script module, loaded only on this path.
+      const getScriptManager = require('selenium-webdriver/bidi/scriptManager');
+      const scripts = await getScriptManager(undefined, driver);
+      await scripts.addPreloadScript(`() => {\n${source}\n}`);
+      return 'bidi';
+    }
+    if (typeof driver.sendDevToolsCommand === 'function') {
+      await driver.sendDevToolsCommand('Page.addScriptToEvaluateOnNewDocument', { source });
+      return 'cdp';
+    }
+    throw new Error(
+      'A11yCoreBuilder.installInternalsHook(): this session has no way to run a script before the page loads. ' +
+      'Enable WebDriver BiDi when building the driver (options.enableBidi(), the webSocketUrl: true capability), ' +
+      'which Chrome, Edge and Firefox support, or use Chrome or Edge, whose DevTools protocol can.'
+    );
+  }
+
   /**
    * @param {{ driver: import('selenium-webdriver').WebDriver, url?: string }} opts
    *   `driver` must already be navigated to and settled at the URL to scan --
