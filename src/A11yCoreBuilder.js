@@ -6,13 +6,18 @@ const {
   A11yCoreBuilderBase,
   createInPageScan,
   rethrowEngineError,
-  queryOccurrenceElement
+  queryOccurrenceElement,
+  cropViewportScreenshot,
+  planScreenshots
 } = require('@surea11y/binding-base');
 
 // core's runa11yCoreInPage, wrapped so an engine error comes back through
 // executeScript() with its `code` (see analyze()). Built once: the wrapper
 // is self-contained, so Selenium serializes it as it would the original.
 const inPageScan = createInPageScan(runa11yCoreInPage);
+
+// The frame elements the frame traversal walks, and screenshots find again.
+const FRAME_SELECTOR = 'iframe, frame';
 
 /**
  * Selenium WebDriver binding for surea11y -- scans a real, already-rendered
@@ -107,6 +112,19 @@ const inPageScan = createInPageScan(runa11yCoreInPage);
  * which RETURNS a base64-encoded PNG string rather than writing a file the
  * way Puppeteer/Playwright's `elementHandle.screenshot({ path })` does.)
  *
+ * Or let the scan take a picture of each element it flags, with
+ * `.screenshots()` (@surea11y/binding-base's, see its README): each
+ * occurrence gets a `screenshot` field, the picture (a Buffer, or a file in
+ * `dir`) or why there is none. The element is scrolled into view and marked
+ * with a box drawn over the page, and the page is put back afterwards; in
+ * every frame with `.frames(true)`, including cross-origin ones:
+ *
+ * const results = await new A11yCoreBuilder({ driver })
+ *   .screenshots({ dir: 'a11y-shots', padding: 16 })
+ *   .analyze();
+ * // results.checksResults[i].occurrences[j].screenshot
+ * //   -> { path: 'a11y-shots/element-3f9a1c07.png', box: { x, y, width, height } }
+ *
  * Register your own rule(s) for just this scan with
  * `.withCustomRules([...])` (@surea11y/core's `engineOptions.customRules`
  * escape hatch -- see ../core/docs/ENGINE_OPTIONS.md). Pass a real,
@@ -136,9 +154,9 @@ const inPageScan = createInPageScan(runa11yCoreInPage);
  * accumulates on top of the first scan's scope rather than replacing it
  * (intentional for "call include() several times for one scan" -- see above
  * -- but a footgun if you hold one instance across multiple assertions).
- * reportOnly()/frames()/elementRef()/withWcag()/withBestPractices() are the
- * exception: each call replaces the previous value rather than merging with
- * it.
+ * reportOnly()/frames()/elementRef()/screenshots()/withWcag()/
+ * withBestPractices() are the exception: each call replaces the previous
+ * value rather than merging with it.
  */
 class A11yCoreBuilder extends A11yCoreBuilderBase {
   /**
@@ -232,18 +250,25 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     //
     // `scanContext` is the contextSelector for this frame: include()'s
     // selectors in the top frame, null in a sub-frame (see scanSubFrames).
-    const runInCurrentFrame = async (scanContext) => {
+    // `path` is where the frame is, the indices of the <iframe>s leading to
+    // it from the top-level document ([] for that document), or null for
+    // whatever frame the driver is in when analyze() is called without
+    // frames(true): what screenshots need to reach it again.
+    const runInCurrentFrame = async (scanContext, path) => {
       const frameUrl = this._url || (await this._safeCurrentFrameUrl());
       if (packScript) await driver.executeScript(packScript);
       const result = rethrowEngineError(
         await driver.executeScript(inPageScan, frameUrl, scanContext, engineOptions, runOnly)
       );
       this._warnScanGaps(result, '@surea11y/selenium');
+      // Right after the frame's scan, before reportOnly(): nothing unless
+      // .screenshots() was called.
+      if (this._screenshots) await this._screenshotFrame(result, path);
       return this._elementRef ? this._attachElementRefs(result) : result;
     };
 
     if (!this._scanFrames) {
-      return this._applyReportOnly(await runInCurrentFrame(contextSelector));
+      return this._applyReportOnly(await runInCurrentFrame(contextSelector, null));
     }
 
     // Frames mode. Unlike Puppeteer/Playwright's page.frames() array of
@@ -271,21 +296,22 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // matches nothing scans nothing, so passing them on would leave every
     // frame without that element unscanned; before, it fell back to the
     // whole frame. exclude() still applies in every frame.
-    const scanSubFrames = async () => {
+    const scanSubFrames = async (path) => {
       let iframes;
       try {
-        iframes = await driver.findElements(By.css('iframe, frame'));
+        iframes = await driver.findElements(By.css(FRAME_SELECTOR));
       } catch (e) {
         // Couldn't even enumerate this document's frames -- nothing to add.
         return;
       }
-      for (const iframe of iframes) {
+      for (let i = 0; i < iframes.length; i++) {
+        const iframe = iframes[i];
         let switched = false;
         try {
           await driver.switchTo().frame(iframe);
           switched = true;
-          frames.push(this._applyReportOnly(await runInCurrentFrame(null)));
-          await scanSubFrames();
+          frames.push(this._applyReportOnly(await runInCurrentFrame(null, path.concat(i))));
+          await scanSubFrames(path.concat(i));
         } catch (e) {
           // A frame can detach/navigate away mid-scan, or be a sandboxed
           // frame the browser blocks scripting in -- don't let one bad frame
@@ -310,8 +336,8 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     };
 
     try {
-      const topFrame = this._applyReportOnly(await runInCurrentFrame(contextSelector));
-      await scanSubFrames();
+      const topFrame = this._applyReportOnly(await runInCurrentFrame(contextSelector, []));
+      await scanSubFrames([]);
       return { topFrame, frames };
     } finally {
       // Always leave the driver back at the top-level document, even if a
@@ -322,6 +348,82 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
       } catch (_) {
         // Best-effort -- nothing more we can do to recover the context here.
       }
+    }
+  }
+
+  /**
+   * binding-base's screenshots step for the frame just scanned, at `path`
+   * (see analyze()). The step switches the driver from frame to frame to
+   * place the element on the top-level page, so the driver is switched back
+   * into the scanned frame afterwards: the frame traversal and
+   * elementRef() go on from there.
+   *
+   * Without frames(true), the scan runs in whatever frame the driver is in.
+   * From the top-level document, that is the page; from a frame the caller
+   * switched into, there is no way to tell which <iframe> leads to it, so
+   * its occurrences get `capture-failed`, saying so, rather than pictures
+   * of the wrong place.
+   */
+  async _screenshotFrame(result, path) {
+    if (path === null) {
+      let top = true;
+      try {
+        top = await this._driver.executeScript('return window === window.top;');
+      } catch (_) {
+        // A frame that can't be asked can't be pictured either; the step
+        // says so for each element.
+      }
+      if (!top) {
+        const error = 'the scan ran in a frame the driver was switched into; screenshots need it to start from the top-level document (use frames(true) to scan frames)';
+        const { elements, unlocated } = planScreenshots(result, { outcomes: this._screenshots.outcomes });
+        for (const occurrence of unlocated) occurrence.screenshot = { skipped: 'no-element' };
+        for (const element of elements) {
+          const screenshot = { skipped: 'capture-failed', error };
+          for (const occurrence of element.occurrences) occurrence.screenshot = screenshot;
+        }
+        return;
+      }
+      await this._captureScreenshots(result, null, []);
+      return;
+    }
+    const framePath = path.map((index, i) => ({ frame: path.slice(0, i), iframe: { index, selector: FRAME_SELECTOR } }));
+    try {
+      await this._captureScreenshots(result, path, framePath);
+    } finally {
+      await this._switchToPath(path).catch(() => {});
+    }
+  }
+
+  /**
+   * For binding-base's screenshots step: runs `fn(...args)` in the frame at
+   * `path` (null: the frame the driver is in). executeScript() waits for the
+   * Promise the step returns, as W3C WebDriver's Execute Script does.
+   */
+  async _evaluateInFrame(path, fn, args) {
+    if (path !== null) await this._switchToPath(path);
+    return this._driver.executeScript(fn, ...args);
+  }
+
+  /**
+   * For binding-base's screenshots step: a PNG of `box`, CSS pixels in the
+   * top-level viewport. Selenium takes the whole viewport, whichever frame
+   * the driver is in; binding-base cuts the box out of it.
+   */
+  async _captureBox(box, view) {
+    return cropViewportScreenshot(await this._driver.takeScreenshot(), box, view);
+  }
+
+  /**
+   * Switches the driver into the frame at `path`, from the top-level
+   * document down, finding the <iframe>s again at each level, as the frame
+   * traversal finds them.
+   */
+  async _switchToPath(path) {
+    await this._driver.switchTo().defaultContent();
+    for (const index of path) {
+      const iframes = await this._driver.findElements(By.css(FRAME_SELECTOR));
+      if (!iframes[index]) throw new Error(`no <iframe> ${index} where the frame was`);
+      await this._driver.switchTo().frame(iframes[index]);
     }
   }
 
