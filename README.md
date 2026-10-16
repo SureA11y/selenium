@@ -8,9 +8,9 @@ A Selenium WebDriver binding for [`@surea11y/core`](https://github.com/SureA11y/
 npm install @surea11y/selenium selenium-webdriver
 ```
 
-`@surea11y/core` 1.12.0 or later comes with it as a peer dependency, as `selenium-webdriver` does: npm 7 and later, and pnpm 8 and later, install it for you, so the line above is all you need. With Yarn 1 or npm 6, which don't install peers, add `@surea11y/core` to that line.
+`@surea11y/core` 1.12.0 or later, the engine, comes with it as a regular dependency, so the line above is all you need, whatever your package manager.
 
-Being a peer means your project and this binding share one copy of core. That matters as soon as your project uses core directly, to write a SARIF log or an HTML report (`@surea11y/core/sarif`, `/report`), read the rule catalogue, or keep a baseline: those read results with the same core that produced them, so a report never labels a finding with another release's rules. It holds when you bring your own core too: a linked checkout (`file:../core`), a monorepo, a fork, or a pinned release. Before 1.4.0, core was a regular dependency, and a project whose core differed from the binding's got a second copy without a word; such a project needed `"overrides": { "@surea11y/core": "$@surea11y/core" }` in its `package.json`, which it can now drop.
+If your project uses core directly too, to write a SARIF log or an HTML report (`@surea11y/core/sarif`, `/report`), read the rule catalogue, or keep a baseline, keep one copy of it, so those read results with the same core that produced them. A compatible range in your own `package.json` (`"@surea11y/core": "^1.12.0"`) is enough: npm installs core once. When yours can't match the binding's range, as with a linked checkout (`file:../core`) or a fork, add `"overrides": { "@surea11y/core": "$@surea11y/core" }` beside it, and the binding uses your copy, which needs to be 1.12.0 or later. 1.4.0 made core a peer dependency instead; 1.4.1 undoes that, because Yarn, npm 6 and npm with `legacy-peer-deps` don't install peers, and a project with an older core pinned couldn't install the binding at all.
 
 `selenium-webdriver` (a `peerDependencies` entry) bundles **Selenium Manager**, which auto-downloads and manages the matching `chromedriver` the first time you call `new Builder().forBrowser('chrome').build()` — no separate Selenium server, no manual chromedriver install, and no browser-download step needed (Chrome itself must be installed on the machine). This is the same zero-extra-setup story `puppeteer.launch()`/`chromium.launch()` have, reached a slightly different way.
 
@@ -39,7 +39,7 @@ await driver.quit();
 
 The builder takes `{ driver }` (a Selenium `WebDriver`), where the Puppeteer/Playwright bindings take `{ page }` — that's the one construction difference. Everything downstream of that is identical.
 
-From 1.4.0 this package requires `@surea11y/core` 1.12.0 or later (installed with this package as a peer; see [Install](#install), and [What changes with `@surea11y/core` 1.12](#what-changes-with-surea11ycore-112)). `results.engine.version` names the core release that produced a result, such as `"1.12.0"`; quote it in a bug report.
+From 1.4.0 this package requires `@surea11y/core` 1.12.0 or later (installed with this package; see [Install](#install), and [What changes with `@surea11y/core` 1.12](#what-changes-with-surea11ycore-112)). `results.engine.version` names the core release that produced a result, such as `"1.12.0"`; quote it in a bug report.
 
 `results` is `@surea11y/core`'s own native result shape — see its [`OUTPUT_SCHEMA.md`](https://github.com/SureA11y/core/blob/main/docs/OUTPUT_SCHEMA.md) — not the `violations`/`passes`/`incomplete`/`inapplicable` shape used by other popular accessibility testing tools. The builder's *method names* are modeled on common conventions in this space for migration familiarity; the richer result schema is kept as-is.
 
