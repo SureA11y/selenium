@@ -1,6 +1,6 @@
 {
   "name": "@surea11y/selenium",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Accessibility (a11y, WCAG) checks for Selenium WebDriver tests: scan the live page with new A11yCoreBuilder({ driver }).analyze() and get only proven violations, with findings that need human review listed separately.",
   "keywords": [
     "accessibility",
