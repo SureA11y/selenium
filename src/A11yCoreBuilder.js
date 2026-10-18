@@ -257,8 +257,15 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     const runInCurrentFrame = async (scanContext, path) => {
       const frameUrl = this._url || (await this._safeCurrentFrameUrl());
       if (packScript) await driver.executeScript(packScript);
+      // The text of the style sheets the frame can't read, fetched from Node
+      // (binding-base 1.6.0 and core 1.14.0; nothing with older ones), in the frame
+      // the driver is in.
+      const frameEngineOptions =
+        typeof this._styleSheetEngineOptions === 'function'
+          ? await this._styleSheetEngineOptions(null, engineOptions)
+          : engineOptions;
       const result = rethrowEngineError(
-        await driver.executeScript(inPageScan, frameUrl, scanContext, engineOptions, runOnly)
+        await driver.executeScript(inPageScan, frameUrl, scanContext, frameEngineOptions, runOnly)
       );
       this._warnScanGaps(result, '@surea11y/selenium');
       // Right after the frame's scan, before reportOnly(): nothing unless
