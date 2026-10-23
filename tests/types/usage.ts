@@ -27,6 +27,8 @@ async function scan(): Promise<string[]> {
   const out: string[] = [];
   try {
     const how: 'bidi' | 'cdp' = await A11yCoreBuilder.installInternalsHook(driver);
+    const listenerHow: 'bidi' | 'cdp' = await A11yCoreBuilder.installListenerHook(driver);
+    void listenerHow;
     out.push(how);
     const planned = new A11yCoreBuilder({ driver }).withWcag('2.2', 'aa').wcagLevel('aa');
     out.push(...planned.plannedChecks().map((c) => c.ruleId), ...planned.plannedCriteria().map((r) => r.id));

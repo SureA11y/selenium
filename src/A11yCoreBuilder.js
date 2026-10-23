@@ -1,7 +1,7 @@
 'use strict';
 
 const { By } = require('selenium-webdriver');
-const { runa11yCoreInPage, internalsHookScript } = require('@surea11y/core');
+const { runa11yCoreInPage, internalsHookScript, listenerHookScript } = require('@surea11y/core');
 const {
   A11yCoreBuilderBase,
   createInPageScan,
@@ -18,6 +18,38 @@ const inPageScan = createInPageScan(runa11yCoreInPage);
 
 // The frame elements the frame traversal walks, and screenshots find again.
 const FRAME_SELECTOR = 'iframe, frame';
+
+// Runs `getSource()`'s script in every frame of the driver's pages, before
+// their own scripts and after each navigation: through WebDriver BiDi's
+// script.addPreloadScript when the session has BiDi (the webSocketUrl
+// capability), else the DevTools protocol's
+// Page.addScriptToEvaluateOnNewDocument on Chrome and Edge. Any other
+// session is rejected, saying how to enable BiDi. `method` names the static
+// method in its errors. Resolves to 'bidi' or 'cdp'.
+async function installBeforeLoad(driver, method, getSource) {
+  if (!driver || typeof driver.getCapabilities !== 'function') {
+    throw new TypeError(`A11yCoreBuilder.${method}() requires a Selenium WebDriver.`);
+  }
+  const source = getSource();
+  const capabilities = await driver.getCapabilities();
+  const webSocketUrl = capabilities && typeof capabilities.get === 'function' ? capabilities.get('webSocketUrl') : undefined;
+  if (typeof webSocketUrl === 'string' && webSocketUrl) {
+    // selenium-webdriver's BiDi script module, loaded only on this path.
+    const getScriptManager = require('selenium-webdriver/bidi/scriptManager');
+    const scripts = await getScriptManager(undefined, driver);
+    await scripts.addPreloadScript(`() => {\n${source}\n}`);
+    return 'bidi';
+  }
+  if (typeof driver.sendDevToolsCommand === 'function') {
+    await driver.sendDevToolsCommand('Page.addScriptToEvaluateOnNewDocument', { source });
+    return 'cdp';
+  }
+  throw new Error(
+    `A11yCoreBuilder.${method}(): this session has no way to run a script before the page loads. ` +
+    'Enable WebDriver BiDi when building the driver (options.enableBidi(), the webSocketUrl: true capability), ' +
+    'which Chrome, Edge and Firefox support, or use Chrome or Edge, whose DevTools protocol can.'
+  );
+}
 
 /**
  * Selenium WebDriver binding for surea11y -- scans a real, already-rendered
@@ -178,28 +210,28 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
    * @returns {Promise<'bidi' | 'cdp'>}
    */
   static async installInternalsHook(driver) {
-    if (!driver || typeof driver.getCapabilities !== 'function') {
-      throw new TypeError('A11yCoreBuilder.installInternalsHook() requires a Selenium WebDriver.');
-    }
-    const source = internalsHookScript();
-    const capabilities = await driver.getCapabilities();
-    const webSocketUrl = capabilities && typeof capabilities.get === 'function' ? capabilities.get('webSocketUrl') : undefined;
-    if (typeof webSocketUrl === 'string' && webSocketUrl) {
-      // selenium-webdriver's BiDi script module, loaded only on this path.
-      const getScriptManager = require('selenium-webdriver/bidi/scriptManager');
-      const scripts = await getScriptManager(undefined, driver);
-      await scripts.addPreloadScript(`() => {\n${source}\n}`);
-      return 'bidi';
-    }
-    if (typeof driver.sendDevToolsCommand === 'function') {
-      await driver.sendDevToolsCommand('Page.addScriptToEvaluateOnNewDocument', { source });
-      return 'cdp';
-    }
-    throw new Error(
-      'A11yCoreBuilder.installInternalsHook(): this session has no way to run a script before the page loads. ' +
-      'Enable WebDriver BiDi when building the driver (options.enableBidi(), the webSocketUrl: true capability), ' +
-      'which Chrome, Edge and Firefox support, or use Chrome or Edge, whose DevTools protocol can.'
-    );
+    return installBeforeLoad(driver, 'installInternalsHook', () => internalsHookScript());
+  }
+
+  /**
+   * Installs @surea11y/core's opt-in listener hook (core 1.14.0 and later),
+   * so the keyboard rules see the click, key, focus and mouse listeners a
+   * page adds from script (addEventListener, or an onclick-style property),
+   * not only inline handler attributes. Call it before driver.get(). It is
+   * installed as installInternalsHook() is: through WebDriver BiDi when the
+   * session has it, else the DevTools protocol on Chrome and Edge, else it
+   * rejects saying how to enable BiDi. Resolves to the way it was installed,
+   * 'bidi' or 'cdp'.
+   * @param {import('selenium-webdriver').WebDriver} driver
+   * @returns {Promise<'bidi' | 'cdp'>}
+   */
+  static async installListenerHook(driver) {
+    return installBeforeLoad(driver, 'installListenerHook', () => {
+      if (typeof listenerHookScript !== 'function') {
+        throw new TypeError('A11yCoreBuilder.installListenerHook() needs @surea11y/core 1.14.0 or later, which has listenerHookScript().');
+      }
+      return listenerHookScript();
+    });
   }
 
   /**
