@@ -9,7 +9,9 @@ import {
   formatFailures,
   formatOccurrenceLocation,
   getScanGaps,
-  getScanNotes
+  getScanNotes,
+  getGatingFailures,
+  SEVERITIES
 } from '../../src/index';
 import type {
   A11yCoreFrameError,
@@ -113,3 +115,6 @@ async function scan(): Promise<string[]> {
 }
 
 export { scan };
+
+declare const gateResult: Parameters<typeof getGatingFailures>[0];
+const gatingIds: string[] = getGatingFailures(gateResult, { failOnSeverity: SEVERITIES[2] }).map((c) => c.ruleId);
