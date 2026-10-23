@@ -353,6 +353,14 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
       return this._elementRef ? this._attachElementRefs(result) : result;
     };
 
+    // .conditions() (binding-base 1.6.0): the page as it is, then under each
+    // condition, merged into one result.
+    if (this._conditions) {
+      return this._applyReportOnly(
+        await this._scanUnderConditions(() => runInCurrentFrame(contextSelector, null), this._conditionDriver())
+      );
+    }
+
     if (!this._scanFrames) {
       return this._applyReportOnly(await runInCurrentFrame(contextSelector, null));
     }
@@ -495,6 +503,79 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
    * top-level viewport. Selenium takes the whole viewport, whichever frame
    * the driver is in; binding-base cuts the box out of it.
    */
+  /**
+   * The driver steps .conditions() scans need. On Chrome and Edge, the
+   * DevTools protocol (driver.sendDevToolsCommand()) sets the viewport's
+   * width (Emulation.setDeviceMetricsOverride, its height kept) and the
+   * color scheme (Emulation.setEmulatedMedia). Elsewhere a width resizes
+   * the window by as much, and a color scheme can't be set: that is
+   * refused before any scan. Each condition sets both, from the page as it
+   * was; at the end the overrides are cleared and the window size put
+   * back, and the page is left dark if it was dark before (a scheme
+   * emulated by the caller, or the system's).
+   */
+  _conditionDriver() {
+    const driver = this._driver;
+    const cdp = typeof driver.sendDevToolsCommand === 'function';
+    let viewport = null;
+    let rect = null;
+    let widthSet = false;
+    let schemeSet = false;
+    // The scheme a condition without one goes back to.
+    let baseScheme = '';
+    const scheme = (value) =>
+      driver.sendDevToolsCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value }] });
+    const resetWidth = () =>
+      cdp ? driver.sendDevToolsCommand('Emulation.clearDeviceMetricsOverride', {}) : driver.manage().window().setRect(rect);
+    return {
+      save: async () => {
+        if (!cdp && this._conditions.some((c) => c.colorScheme)) {
+          throw new Error(
+            'A11yCoreBuilder.conditions(): a colorScheme needs Chrome or Edge, whose DevTools protocol can emulate it; ' +
+            'this session has no driver.sendDevToolsCommand().'
+          );
+        }
+        const before = await driver.executeScript(
+          "return { width: window.innerWidth, height: window.innerHeight, dark: matchMedia('(prefers-color-scheme: dark)').matches };"
+        );
+        viewport = { width: before.width, height: before.height };
+        baseScheme = before.dark ? 'dark' : '';
+        if (!cdp) rect = await driver.manage().window().getRect();
+        return { viewport, rect };
+      },
+      apply: async (condition) => {
+        if (condition.width) {
+          if (cdp) {
+            await driver.sendDevToolsCommand('Emulation.setDeviceMetricsOverride', {
+              width: condition.width,
+              height: viewport.height,
+              deviceScaleFactor: 0,
+              mobile: false
+            });
+          } else {
+            await driver.manage().window().setRect({ width: rect.width - viewport.width + condition.width, height: rect.height });
+          }
+          widthSet = true;
+        } else if (widthSet) {
+          await resetWidth();
+          widthSet = false;
+        }
+        if (condition.colorScheme) {
+          await scheme(condition.colorScheme);
+          schemeSet = true;
+        } else if (schemeSet) {
+          await scheme(baseScheme);
+          schemeSet = false;
+        }
+      },
+      restore: async (state) => {
+        if (!state) return;
+        if (widthSet) await resetWidth();
+        if (schemeSet) await scheme(baseScheme);
+      }
+    };
+  }
+
   async _captureBox(box, view) {
     return cropViewportScreenshot(await this._driver.takeScreenshot(), box, view);
   }

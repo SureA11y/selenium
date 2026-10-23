@@ -1559,6 +1559,79 @@ test('A11yCoreBuilder.installLiveRegionHook() and getAnnouncements() reject what
   }
 });
 
+const HAS_CONDITIONS = typeof require('@surea11y/binding-base').mergeConditionResults === 'function';
+const NEEDS_CONDITIONS = !HAS_CONDITIONS && 'needs @surea11y/binding-base 1.6.0';
+// Reads well in the light scheme; in the dark one its text is #444 on #222.
+const DARK_CONTRAST = 'data:text/html,' + encodeURIComponent(
+  '<!doctype html><html lang="en"><head><title>t</title><style>' +
+  'body { color: #111; background: #fff } ' +
+  '@media (prefers-color-scheme: dark) { body { color: #444; background: #222 } }' +
+  '</style></head><body><main><h1>Hi</h1><p id="note">Read me</p></main></body></html>'
+);
+
+test('A11yCoreBuilder.conditions(): a failure only in dark mode fails the merged result, labelled, and the page is put back', { skip: NEEDS_CONDITIONS }, async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(DARK_CONTRAST);
+    const before = await driver.executeScript('return window.innerWidth;');
+    const results = await new A11yCoreBuilder({ driver })
+      .withRules('contrast-minimum')
+      .conditions([{ colorScheme: 'dark' }, { width: 320 }])
+      .analyze();
+    const check = results.checksResults.find((r) => r.ruleId === 'contrast-minimum');
+    assert.strictEqual(check.outcome, 'fail');
+    assert.ok(check.occurrences.length > 0);
+    for (const o of check.occurrences) assert.deepStrictEqual(o.conditions, ['dark']);
+    assert.deepStrictEqual(
+      results.conditionRuns.map((r) => [r.condition, r.environment.colorScheme]),
+      [['default', 'light'], ['dark', 'dark'], ['width 320', 'light']]
+    );
+    assert.strictEqual(results.conditionRuns[2].environment.viewport.width, 320);
+    assert.strictEqual(await driver.executeScript('return window.innerWidth;'), before);
+    assert.strictEqual(await driver.executeScript("return matchMedia('(prefers-color-scheme: dark)').matches;"), false);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder.conditions(): a color scheme without the DevTools protocol is refused before any scan', { skip: NEEDS_CONDITIONS }, async () => {
+  let scripts = 0;
+  const driver = { executeScript: async () => { scripts += 1; return {}; }, manage: () => ({ window: () => ({ getRect: async () => ({}) }) }) };
+  const builder = new A11yCoreBuilder({ driver }).conditions([{ colorScheme: 'dark' }]);
+  await assert.rejects(builder._scanUnderConditions(async () => ({ checksResults: [] }), builder._conditionDriver()), /a colorScheme needs Chrome or Edge/);
+  assert.strictEqual(scripts, 0);
+});
+
+test('A11yCoreBuilder.conditions(): a dark scheme the caller emulated stays dark, and a width-only condition scans in it', { skip: NEEDS_CONDITIONS }, async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(DARK_CONTRAST);
+    await driver.sendDevToolsCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+    const results = await new A11yCoreBuilder({ driver })
+      .withRules('contrast-minimum')
+      .conditions([{ colorScheme: 'light' }, { width: 320 }])
+      .analyze();
+    assert.deepStrictEqual(
+      results.conditionRuns.map((r) => [r.condition, r.environment.colorScheme]),
+      [['default', 'dark'], ['light', 'light'], ['width 320', 'dark']]
+    );
+    assert.strictEqual(await driver.executeScript("return matchMedia('(prefers-color-scheme: dark)').matches;"), true);
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder.conditions(): without the DevTools protocol, a width resizes the window by as much and puts it back', { skip: NEEDS_CONDITIONS }, async () => {
+  const rects = [];
+  const driver = {
+    executeScript: async () => ({ width: 1000, height: 700, dark: false }),
+    manage: () => ({ window: () => ({ getRect: async () => ({ x: 0, y: 0, width: 1016, height: 800 }), setRect: async (r) => { rects.push(r); } }) })
+  };
+  const builder = new A11yCoreBuilder({ driver }).conditions([{ width: 320 }]);
+  await builder._scanUnderConditions(async () => ({ checksResults: [] }), builder._conditionDriver());
+  assert.deepStrictEqual(rects, [{ width: 336, height: 800 }, { x: 0, y: 0, width: 1016, height: 800 }]);
+});
+
 test('A11yCoreBuilder: without the listener hook, analyze() says once per scan that it would let the engine judge those handlers', { skip: NEEDS_NOTE }, async (t) => {
   const warnings = [];
   t.mock.method(console, 'warn', (msg) => { warnings.push(String(msg)); });
