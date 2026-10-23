@@ -138,6 +138,25 @@ export class A11yCoreBuilder {
   static installListenerHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
 
   /**
+   * Installs @surea11y/core's opt-in live-region hook (core 1.14.0 and
+   * later): live-region-announcements then also asks about a live region
+   * added with its text already in it, or shown and filled at once, and
+   * getAnnouncements() reads what the page made available to announce. Call
+   * it before driver.get(); installed as installInternalsHook() is.
+   */
+  static installLiveRegionHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
+
+  /**
+   * What the current page's live regions were given while shown and
+   * reachable, as the live-region hook recorded it, in order; null without
+   * the hook. Not what a screen reader said. Needs core 1.14.0 and
+   * binding-base 1.6.0.
+   */
+  static getAnnouncements(
+    driver: WebDriver
+  ): Promise<Array<{ text: string; politeness: 'polite' | 'assertive'; time: number }> | null>;
+
+  /**
    * Scope the scan to one region. Call multiple times for a multi-region
    * union. A selector that matches nothing scans nothing (see the result's
    * `contextMatch`); one the browser can't parse makes analyze() reject with
