@@ -97,7 +97,7 @@ const results = await new A11yCoreBuilder({ driver })
 
 A batch job that writes `getScanGaps(results)` into its own report can pass `.logger(() => {})` to keep its output to the report, and `.logger(null)` brings `console.warn` back. Anything other than a function or `null` throws a `TypeError` at the call, and a later call replaces the logger. Either way, `getScanGaps(results)` still lists every gap.
 
-`getScanNotes(results)` says how the page was scanned, which a gap doesn't cover, and nothing was left out: `'forced-colors'` when the page was shown in [forced colors](#forced-colors), and `'internals-hook'` when the scan asked about web components it could have read with the [internals hook](#web-components-the-internals-hook). `analyze()` also prints the internals note, once per scan, and a `.logger()` receives it (check `kind` to tell a note from a gap).
+`getScanNotes(results)` says how the page was scanned, which a gap doesn't cover, and nothing was left out: `'forced-colors'` when the page was shown in [forced colors](#forced-colors), `'internals-hook'` when the scan asked about web components it could have read with the [internals hook](#web-components-the-internals-hook), and `'listener-hook'` when it asked about handlers whose keyboard equivalent the [listener hook](#listeners-added-from-script-the-listener-hook) would have let it see. `analyze()` also prints the internals and listener notes, once per scan each, and a `.logger()` receives them (check `kind` to tell a note from a gap).
 
 **Create one builder per scan.** `A11yCoreBuilder` is a mutable object with no reset between `.analyze()` calls — `include()`/`exclude()`/`withRules()`/`disableRules()`/`withTags()`/`disableTags()`/`options()`/`withCustomRules()`/`withPacks()` all push onto or merge into internal state that persists for the instance's lifetime. Calling one of them again before a second `.analyze()` call *accumulates* on top of the first scan's scope rather than replacing it (this is exactly what makes "call `.include()` several times for one scan," above, work — the same accumulation just also applies across separate scans if you reuse an instance). `.reportOnly()`/`.frames()`/`.elementRef()`/`.screenshots()`/`.withWcag()`/`.withBestPractices()`/`.includeMode()`/`.wcagLevel()`/`.logger()` are the exception: each call replaces the previous value instead of merging with it.
 
@@ -298,6 +298,38 @@ With it, the checkbox above passes, an unnamed component that attaches internals
 - **For test and audit runs.** The hook wraps `HTMLElement.prototype.attachInternals` (components get the same internals back), adds a stack frame to errors thrown through it, and keeps its record under a global symbol, where any script on the page can read every component's internals. That's why it's opt-in.
 - **Without it**, `analyze()` says so once per scan when it asked about such components (`1 custom element was asked about because the scan could not read...`), and `getScanNotes()` gives that note as `kind: 'internals-hook'`.
 
+### Listeners added from script: the listener hook
+
+The keyboard rules read inline handlers (`onclick="…"`) from the markup. Most apps add theirs from script, which no page script can list afterwards:
+
+```js
+document.querySelector('#save').addEventListener('click', save); // on a <div role="button" tabindex="0">
+```
+
+The browser fires `click` from Enter and Space only on native controls, so this button does nothing from the keyboard. By default the scan can't see the listener, so it doesn't report the element.
+
+`A11yCoreBuilder.installListenerHook(driver)` (`@surea11y/core` 1.14.0 and later) installs core's opt-in hook, which records the click, key, focus and mouse listeners a page adds with `addEventListener` or an `onclick`-style property. It's installed as the internals hook is (WebDriver BiDi when the session has it, else the DevTools protocol on Chrome and Edge), resolves to `'bidi'` or `'cdp'`, and must be called **before** `driver.get()`. The two hooks can be installed together:
+
+```js
+await A11yCoreBuilder.installListenerHook(driver); // 'bidi' (or 'cdp' without BiDi on Chrome)
+await driver.get('https://example.com/');
+
+const results = await new A11yCoreBuilder({ driver }).analyze();
+results.engine.environment.listenerHook; // 'early': the hook ran before the page's scripts
+```
+
+With it:
+
+- **The button above fails** `click-handler-keyboard-operable` (`CLICK_HANDLER_NO_KEY_LISTENER`): it's a focusable control with no key listener on it, inside it, above it, on the document or on the window. Once it listens for `keydown`, it passes.
+- **A key listener only above the element** (on an ancestor, the document or the window) is asked about: it may handle this element's keys, or only others'.
+- **A click listener on a container**, as a framework that delegates events from its root adds, makes no element inside it a candidate, so delegated handlers never fail.
+- **Pointer listeners** added from script are asked about by `mouse-only-event-handlers`, unless the element also has a keyboard equivalent.
+
+- **A classic session on another browser** rejects the call, as for the internals hook, saying how to enable BiDi.
+- **Before the page loads.** Only a hook that ran before the page's scripts proves an element has no key listener. Called after `driver.get()`, it has no effect until the next navigation.
+- **For test and audit runs.** The hook wraps `addEventListener`, `removeEventListener` and the `on…` property setters (listeners themselves aren't wrapped, and run as before), and keeps its record under a global symbol. That's why it's opt-in.
+- **Without it**, `analyze()` says so once per scan when it asked about an inline click or pointer handler whose keyboard equivalent may have been added from script (`1 element was asked about because the scan could not see...`), and `getScanNotes()` gives that note as `kind: 'listener-hook'`.
+
 ### Forced colors
 
 A page shown in forced colors (Windows high contrast) draws in the user's colors, not its own. `results.engine.environment.forcedColors` says which it was: `'active'` or `'none'`. To check a page under forced colors on purpose in Chrome or Edge, emulate it through the DevTools protocol before scanning:
@@ -437,12 +469,14 @@ Every occurrence already carries `selector` and (with `.elementRef(true)`, above
 
 ## TypeScript
 
-`src/A11yCoreBuilder.d.ts` (re-exported from `src/index.d.ts`, wired up via `package.json`'s `types` field) ships hand-written types for the whole builder API. The result shapes (`A11yCoreResult`, `CheckResult`, `Occurrence`, `CompositeResult`, etc.) are built on `@surea11y/core`'s own types, so they carry every field core declares (`engine.version`, `contextMatch`, `skippedCustomRules`, `margin`, `shadowHostSelectors`, ...); this package adds only `Occurrence#elementHandle` and `Occurrence#screenshot`. `EngineError`, `getScanGaps()`, `getScanNotes()`, `formatOccurrenceLocation()` and `formatFailures()` are typed as `@surea11y/binding-base` declares them, and so are `withWcag()` and `wcagLevel()` (`WcagVersion`, `WcagLevelInput`), `plannedChecks()`/`plannedCriteria()` (`PlannedCheck`, `PlannedCriterion`), the static `installInternalsHook()`, `withPacks()`, which takes a pack made with `definePack` (`PackLike`), and `.screenshots()` (`ScreenshotOptions`, and `OccurrenceScreenshot` for an occurrence's `screenshot`). Code that handles every `ScanGap` kind it knows and treats the rest in an `else` branch needs a branch for `'pack-skipped'`, which carries `pack` rather than `selectors`. `analyze()` is typed `Promise<A11yCoreResult | A11yCoreMultiFrameResult>` — narrow on `'topFrame' in results` (or cast, if you already know which mode you called) to get the specific shape back, since a fluent builder can't statically track that `.frames(true)` was called earlier in the chain. `selenium-webdriver` is a `peerDependencies` entry (not just `devDependencies`) since the class's `driver` argument and `Occurrence#elementHandle` (a `WebElement`) both come from it — consumers need their own `selenium-webdriver` install for the types to resolve, same as they already do to construct a `WebDriver` in the first place. `npm test` compiles a consumer script exercising every method and both `analyze()` return shapes with `tsc --strict` (`tests/types/usage.ts`).
+`src/A11yCoreBuilder.d.ts` (re-exported from `src/index.d.ts`, wired up via `package.json`'s `types` field) ships hand-written types for the whole builder API. The result shapes (`A11yCoreResult`, `CheckResult`, `Occurrence`, `CompositeResult`, etc.) are built on `@surea11y/core`'s own types, so they carry every field core declares (`engine.version`, `contextMatch`, `skippedCustomRules`, `margin`, `shadowHostSelectors`, ...); this package adds only `Occurrence#elementHandle` and `Occurrence#screenshot`. `EngineError`, `getScanGaps()`, `getScanNotes()`, `formatOccurrenceLocation()` and `formatFailures()` are typed as `@surea11y/binding-base` declares them, and so are `withWcag()` and `wcagLevel()` (`WcagVersion`, `WcagLevelInput`), `plannedChecks()`/`plannedCriteria()` (`PlannedCheck`, `PlannedCriterion`), the static `installInternalsHook()` and `installListenerHook()`, `withPacks()`, which takes a pack made with `definePack` (`PackLike`), and `.screenshots()` (`ScreenshotOptions`, and `OccurrenceScreenshot` for an occurrence's `screenshot`). Code that handles every `ScanGap` kind it knows and treats the rest in an `else` branch needs a branch for `'pack-skipped'`, which carries `pack` rather than `selectors`. `analyze()` is typed `Promise<A11yCoreResult | A11yCoreMultiFrameResult>` — narrow on `'topFrame' in results` (or cast, if you already know which mode you called) to get the specific shape back, since a fluent builder can't statically track that `.frames(true)` was called earlier in the chain. `selenium-webdriver` is a `peerDependencies` entry (not just `devDependencies`) since the class's `driver` argument and `Occurrence#elementHandle` (a `WebElement`) both come from it — consumers need their own `selenium-webdriver` install for the types to resolve, same as they already do to construct a `WebDriver` in the first place. `npm test` compiles a consumer script exercising every method and both `analyze()` return shapes with `tsc --strict` (`tests/types/usage.ts`).
 
 ## What changes with `@surea11y/core` 1.14
 
 With `@surea11y/core` 1.14.0, what a scan through this binding shows differently (core's [`CHANGELOG.md`](https://github.com/SureA11y/core/blob/main/CHANGELOG.md) has the full list):
 
+- **Listeners added from script.** With [`installListenerHook()`](#listeners-added-from-script-the-listener-hook), `click-handler-keyboard-operable` judges a click listener added with `addEventListener` as an inline `onclick`, and fails a focusable control that no key listener can reach (`CLICK_HANDLER_NO_KEY_LISTENER`); `mouse-only-event-handlers` asks about pointer listeners added from script. Both rules' messages now say "click handler" rather than "onclick handler".
+- **Roles that depend on context.** `aria-allowed-attr` no longer fails `aria-expanded` on a text input whose `list` names a `<datalist>` (a combobox), and now judges `<td>`: `cell` in a table, `gridcell` in a grid. `label-in-name` checks a `<td>` in a grid. `heading-order` and `page-has-heading-one` count a heading marked `role="none"` that can take focus or has a global ARIA attribute, as browsers do.
 - **Style sheets from another origin are checked.** `.analyze()` fetches, from Node, the style sheets the page can't read and core checks them, so `css-orientation-lock` finds a lock in a CDN's CSS instead of asking (`.fetchStyleSheets(false)` turns it off). [More](#style-sheets-from-another-origin).
 - **Criteria are `notApplicable` only where the rules see every case.** A WCAG rollup whose rules all found nothing is now `cantTell` (`reasonCode` `composite.rollup.cantTell.partialCoverage`), except for 1.3.5, 2.4.3, 2.4.4, 2.4.7, 2.4.9, 2.5.3, 2.5.8, 3.3.2 and 4.1.1, whose rules find every link, field, focusable element, target or id. A gate that asserted a criterion `notApplicable` now sees `cantTell`.
 - **New checks.** `click-handler-keyboard-operable` (2.1.1, 2.1.3) fails an inline `onclick` on an element the keyboard can't reach, and asks about one that has no key handler. `moving-content-pausable` (2.2.2) asks about content that moves by itself for more than five seconds.
