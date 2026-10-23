@@ -251,3 +251,18 @@ export class A11yCoreBuilder {
    */
   analyze(): Promise<A11yCoreResult | A11yCoreMultiFrameResult>;
 }
+
+/** The four severities, least to most severe (@surea11y/binding-base 1.6.0 and later). */
+export const SEVERITIES: ReadonlyArray<Severity>;
+
+/**
+ * The failing rule results that should fail a test: every `fail`, or with
+ * `failOnSeverity` only those whose severity is that level or above, as
+ * `surea11y scan --fail-on-severity` counts them. `fail` keeps its meaning;
+ * the level only picks which failures stop the test. Throws a TypeError for
+ * a level that is not a severity. From @surea11y/binding-base 1.6.0.
+ */
+export function getGatingFailures(
+  input: A11yCoreResult | ReadonlyArray<CheckResult>,
+  opts?: { failOnSeverity?: Severity }
+): CheckResult[];
