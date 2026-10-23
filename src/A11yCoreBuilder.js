@@ -1,14 +1,21 @@
 'use strict';
 
 const { By } = require('selenium-webdriver');
-const { runa11yCoreInPage, internalsHookScript, listenerHookScript } = require('@surea11y/core');
+const {
+  runa11yCoreInPage,
+  internalsHookScript,
+  listenerHookScript,
+  liveRegionHookScript,
+  getAnnouncements
+} = require('@surea11y/core');
 const {
   A11yCoreBuilderBase,
   createInPageScan,
   rethrowEngineError,
   queryOccurrenceElement,
   cropViewportScreenshot,
-  planScreenshots
+  planScreenshots,
+  createInPageAnnouncements
 } = require('@surea11y/binding-base');
 
 // core's runa11yCoreInPage, wrapped so an engine error comes back through
@@ -232,6 +239,46 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
       }
       return listenerHookScript();
     });
+  }
+
+  /**
+   * Installs @surea11y/core's opt-in live-region hook (core 1.14.0 and
+   * later), which records what the page's live regions are given from the
+   * load event on: live-region-announcements then asks about a region added
+   * with its text already in it, or shown and filled at once, and
+   * getAnnouncements() reads what the page made available to announce. Call
+   * it before driver.get(). It is installed as installInternalsHook() is.
+   * Resolves to the way it was installed, 'bidi' or 'cdp'.
+   * @param {import('selenium-webdriver').WebDriver} driver
+   * @returns {Promise<'bidi' | 'cdp'>}
+   */
+  static async installLiveRegionHook(driver) {
+    return installBeforeLoad(driver, 'installLiveRegionHook', () => {
+      if (typeof liveRegionHookScript !== 'function') {
+        throw new TypeError('A11yCoreBuilder.installLiveRegionHook() needs @surea11y/core 1.14.0 or later, which has liveRegionHookScript().');
+      }
+      return liveRegionHookScript();
+    });
+  }
+
+  /**
+   * What the current page's live regions were given while shown and
+   * reachable by assistive technology, as the live-region hook recorded it:
+   * [{ text, politeness, time }] in the order the page did it, or null when
+   * the page has no hook. What the page made available to announce, not what
+   * a screen reader said. Reads the frame the driver is switched to.
+   * @param {import('selenium-webdriver').WebDriver} driver
+   * @returns {Promise<Array<{ text: string, politeness: 'polite' | 'assertive', time: number }> | null>}
+   */
+  static async getAnnouncements(driver) {
+    if (!driver || typeof driver.executeScript !== 'function') {
+      throw new TypeError('A11yCoreBuilder.getAnnouncements() requires a Selenium WebDriver (with an .executeScript() method).');
+    }
+    if (typeof getAnnouncements !== 'function' || typeof createInPageAnnouncements !== 'function') {
+      throw new TypeError('A11yCoreBuilder.getAnnouncements() needs @surea11y/core 1.14.0 and @surea11y/binding-base 1.6.0 or later.');
+    }
+    const read = createInPageAnnouncements(getAnnouncements);
+    return driver.executeScript(`return (${read.toString()})();`);
   }
 
   /**

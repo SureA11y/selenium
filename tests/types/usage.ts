@@ -28,6 +28,9 @@ async function scan(): Promise<string[]> {
   try {
     const how: 'bidi' | 'cdp' = await A11yCoreBuilder.installInternalsHook(driver);
     const listenerHow: 'bidi' | 'cdp' = await A11yCoreBuilder.installListenerHook(driver);
+    const liveRegionHow: 'bidi' | 'cdp' = await A11yCoreBuilder.installLiveRegionHook(driver);
+    const said = await A11yCoreBuilder.getAnnouncements(driver);
+    const texts: string[] = (said || []).map((a) => `${a.politeness}: ${a.text}`);
     void listenerHow;
     out.push(how);
     const planned = new A11yCoreBuilder({ driver }).withWcag('2.2', 'aa').wcagLevel('aa');
