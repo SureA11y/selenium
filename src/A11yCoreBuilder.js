@@ -1,14 +1,21 @@
 'use strict';
 
 const { By } = require('selenium-webdriver');
-const { runa11yCoreInPage, internalsHookScript } = require('@surea11y/core');
+const {
+  runa11yCoreInPage,
+  internalsHookScript,
+  listenerHookScript,
+  liveRegionHookScript,
+  getAnnouncements
+} = require('@surea11y/core');
 const {
   A11yCoreBuilderBase,
   createInPageScan,
   rethrowEngineError,
   queryOccurrenceElement,
   cropViewportScreenshot,
-  planScreenshots
+  planScreenshots,
+  createInPageAnnouncements
 } = require('@surea11y/binding-base');
 
 // core's runa11yCoreInPage, wrapped so an engine error comes back through
@@ -18,6 +25,38 @@ const inPageScan = createInPageScan(runa11yCoreInPage);
 
 // The frame elements the frame traversal walks, and screenshots find again.
 const FRAME_SELECTOR = 'iframe, frame';
+
+// Runs `getSource()`'s script in every frame of the driver's pages, before
+// their own scripts and after each navigation: through WebDriver BiDi's
+// script.addPreloadScript when the session has BiDi (the webSocketUrl
+// capability), else the DevTools protocol's
+// Page.addScriptToEvaluateOnNewDocument on Chrome and Edge. Any other
+// session is rejected, saying how to enable BiDi. `method` names the static
+// method in its errors. Resolves to 'bidi' or 'cdp'.
+async function installBeforeLoad(driver, method, getSource) {
+  if (!driver || typeof driver.getCapabilities !== 'function') {
+    throw new TypeError(`A11yCoreBuilder.${method}() requires a Selenium WebDriver.`);
+  }
+  const source = getSource();
+  const capabilities = await driver.getCapabilities();
+  const webSocketUrl = capabilities && typeof capabilities.get === 'function' ? capabilities.get('webSocketUrl') : undefined;
+  if (typeof webSocketUrl === 'string' && webSocketUrl) {
+    // selenium-webdriver's BiDi script module, loaded only on this path.
+    const getScriptManager = require('selenium-webdriver/bidi/scriptManager');
+    const scripts = await getScriptManager(undefined, driver);
+    await scripts.addPreloadScript(`() => {\n${source}\n}`);
+    return 'bidi';
+  }
+  if (typeof driver.sendDevToolsCommand === 'function') {
+    await driver.sendDevToolsCommand('Page.addScriptToEvaluateOnNewDocument', { source });
+    return 'cdp';
+  }
+  throw new Error(
+    `A11yCoreBuilder.${method}(): this session has no way to run a script before the page loads. ` +
+    'Enable WebDriver BiDi when building the driver (options.enableBidi(), the webSocketUrl: true capability), ' +
+    'which Chrome, Edge and Firefox support, or use Chrome or Edge, whose DevTools protocol can.'
+  );
+}
 
 /**
  * Selenium WebDriver binding for surea11y -- scans a real, already-rendered
@@ -178,28 +217,68 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
    * @returns {Promise<'bidi' | 'cdp'>}
    */
   static async installInternalsHook(driver) {
-    if (!driver || typeof driver.getCapabilities !== 'function') {
-      throw new TypeError('A11yCoreBuilder.installInternalsHook() requires a Selenium WebDriver.');
+    return installBeforeLoad(driver, 'installInternalsHook', () => internalsHookScript());
+  }
+
+  /**
+   * Installs @surea11y/core's opt-in listener hook (core 1.14.0 and later),
+   * so the keyboard rules see the click, key, focus and mouse listeners a
+   * page adds from script (addEventListener, or an onclick-style property),
+   * not only inline handler attributes. Call it before driver.get(). It is
+   * installed as installInternalsHook() is: through WebDriver BiDi when the
+   * session has it, else the DevTools protocol on Chrome and Edge, else it
+   * rejects saying how to enable BiDi. Resolves to the way it was installed,
+   * 'bidi' or 'cdp'.
+   * @param {import('selenium-webdriver').WebDriver} driver
+   * @returns {Promise<'bidi' | 'cdp'>}
+   */
+  static async installListenerHook(driver) {
+    return installBeforeLoad(driver, 'installListenerHook', () => {
+      if (typeof listenerHookScript !== 'function') {
+        throw new TypeError('A11yCoreBuilder.installListenerHook() needs @surea11y/core 1.14.0 or later, which has listenerHookScript().');
+      }
+      return listenerHookScript();
+    });
+  }
+
+  /**
+   * Installs @surea11y/core's opt-in live-region hook (core 1.14.0 and
+   * later), which records what the page's live regions are given from the
+   * load event on: live-region-announcements then asks about a region added
+   * with its text already in it, or shown and filled at once, and
+   * getAnnouncements() reads what the page made available to announce. Call
+   * it before driver.get(). It is installed as installInternalsHook() is.
+   * Resolves to the way it was installed, 'bidi' or 'cdp'.
+   * @param {import('selenium-webdriver').WebDriver} driver
+   * @returns {Promise<'bidi' | 'cdp'>}
+   */
+  static async installLiveRegionHook(driver) {
+    return installBeforeLoad(driver, 'installLiveRegionHook', () => {
+      if (typeof liveRegionHookScript !== 'function') {
+        throw new TypeError('A11yCoreBuilder.installLiveRegionHook() needs @surea11y/core 1.14.0 or later, which has liveRegionHookScript().');
+      }
+      return liveRegionHookScript();
+    });
+  }
+
+  /**
+   * What the current page's live regions were given while shown and
+   * reachable by assistive technology, as the live-region hook recorded it:
+   * [{ text, politeness, time }] in the order the page did it, or null when
+   * the page has no hook. What the page made available to announce, not what
+   * a screen reader said. Reads the frame the driver is switched to.
+   * @param {import('selenium-webdriver').WebDriver} driver
+   * @returns {Promise<Array<{ text: string, politeness: 'polite' | 'assertive', time: number }> | null>}
+   */
+  static async getAnnouncements(driver) {
+    if (!driver || typeof driver.executeScript !== 'function') {
+      throw new TypeError('A11yCoreBuilder.getAnnouncements() requires a Selenium WebDriver (with an .executeScript() method).');
     }
-    const source = internalsHookScript();
-    const capabilities = await driver.getCapabilities();
-    const webSocketUrl = capabilities && typeof capabilities.get === 'function' ? capabilities.get('webSocketUrl') : undefined;
-    if (typeof webSocketUrl === 'string' && webSocketUrl) {
-      // selenium-webdriver's BiDi script module, loaded only on this path.
-      const getScriptManager = require('selenium-webdriver/bidi/scriptManager');
-      const scripts = await getScriptManager(undefined, driver);
-      await scripts.addPreloadScript(`() => {\n${source}\n}`);
-      return 'bidi';
+    if (typeof getAnnouncements !== 'function' || typeof createInPageAnnouncements !== 'function') {
+      throw new TypeError('A11yCoreBuilder.getAnnouncements() needs @surea11y/core 1.14.0 and @surea11y/binding-base 1.6.0 or later.');
     }
-    if (typeof driver.sendDevToolsCommand === 'function') {
-      await driver.sendDevToolsCommand('Page.addScriptToEvaluateOnNewDocument', { source });
-      return 'cdp';
-    }
-    throw new Error(
-      'A11yCoreBuilder.installInternalsHook(): this session has no way to run a script before the page loads. ' +
-      'Enable WebDriver BiDi when building the driver (options.enableBidi(), the webSocketUrl: true capability), ' +
-      'which Chrome, Edge and Firefox support, or use Chrome or Edge, whose DevTools protocol can.'
-    );
+    const read = createInPageAnnouncements(getAnnouncements);
+    return driver.executeScript(`return (${read.toString()})();`);
   }
 
   /**
@@ -273,6 +352,14 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
       if (this._screenshots) await this._screenshotFrame(result, path);
       return this._elementRef ? this._attachElementRefs(result) : result;
     };
+
+    // .conditions() (binding-base 1.6.0): the page as it is, then under each
+    // condition, merged into one result.
+    if (this._conditions) {
+      return this._applyReportOnly(
+        await this._scanUnderConditions(() => runInCurrentFrame(contextSelector, null), this._conditionDriver())
+      );
+    }
 
     if (!this._scanFrames) {
       return this._applyReportOnly(await runInCurrentFrame(contextSelector, null));
@@ -416,6 +503,79 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
    * top-level viewport. Selenium takes the whole viewport, whichever frame
    * the driver is in; binding-base cuts the box out of it.
    */
+  /**
+   * The driver steps .conditions() scans need. On Chrome and Edge, the
+   * DevTools protocol (driver.sendDevToolsCommand()) sets the viewport's
+   * width (Emulation.setDeviceMetricsOverride, its height kept) and the
+   * color scheme (Emulation.setEmulatedMedia). Elsewhere a width resizes
+   * the window by as much, and a color scheme can't be set: that is
+   * refused before any scan. Each condition sets both, from the page as it
+   * was; at the end the overrides are cleared and the window size put
+   * back, and the page is left dark if it was dark before (a scheme
+   * emulated by the caller, or the system's).
+   */
+  _conditionDriver() {
+    const driver = this._driver;
+    const cdp = typeof driver.sendDevToolsCommand === 'function';
+    let viewport = null;
+    let rect = null;
+    let widthSet = false;
+    let schemeSet = false;
+    // The scheme a condition without one goes back to.
+    let baseScheme = '';
+    const scheme = (value) =>
+      driver.sendDevToolsCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value }] });
+    const resetWidth = () =>
+      cdp ? driver.sendDevToolsCommand('Emulation.clearDeviceMetricsOverride', {}) : driver.manage().window().setRect(rect);
+    return {
+      save: async () => {
+        if (!cdp && this._conditions.some((c) => c.colorScheme)) {
+          throw new Error(
+            'A11yCoreBuilder.conditions(): a colorScheme needs Chrome or Edge, whose DevTools protocol can emulate it; ' +
+            'this session has no driver.sendDevToolsCommand().'
+          );
+        }
+        const before = await driver.executeScript(
+          "return { width: window.innerWidth, height: window.innerHeight, dark: matchMedia('(prefers-color-scheme: dark)').matches };"
+        );
+        viewport = { width: before.width, height: before.height };
+        baseScheme = before.dark ? 'dark' : '';
+        if (!cdp) rect = await driver.manage().window().getRect();
+        return { viewport, rect };
+      },
+      apply: async (condition) => {
+        if (condition.width) {
+          if (cdp) {
+            await driver.sendDevToolsCommand('Emulation.setDeviceMetricsOverride', {
+              width: condition.width,
+              height: viewport.height,
+              deviceScaleFactor: 0,
+              mobile: false
+            });
+          } else {
+            await driver.manage().window().setRect({ width: rect.width - viewport.width + condition.width, height: rect.height });
+          }
+          widthSet = true;
+        } else if (widthSet) {
+          await resetWidth();
+          widthSet = false;
+        }
+        if (condition.colorScheme) {
+          await scheme(condition.colorScheme);
+          schemeSet = true;
+        } else if (schemeSet) {
+          await scheme(baseScheme);
+          schemeSet = false;
+        }
+      },
+      restore: async (state) => {
+        if (!state) return;
+        if (widthSet) await resetWidth();
+        if (schemeSet) await scheme(baseScheme);
+      }
+    };
+  }
+
   async _captureBox(box, view) {
     return cropViewportScreenshot(await this._driver.takeScreenshot(), box, view);
   }

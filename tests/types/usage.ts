@@ -9,7 +9,9 @@ import {
   formatFailures,
   formatOccurrenceLocation,
   getScanGaps,
-  getScanNotes
+  getScanNotes,
+  getGatingFailures,
+  SEVERITIES
 } from '../../src/index';
 import type {
   A11yCoreFrameError,
@@ -27,6 +29,11 @@ async function scan(): Promise<string[]> {
   const out: string[] = [];
   try {
     const how: 'bidi' | 'cdp' = await A11yCoreBuilder.installInternalsHook(driver);
+    const listenerHow: 'bidi' | 'cdp' = await A11yCoreBuilder.installListenerHook(driver);
+    const liveRegionHow: 'bidi' | 'cdp' = await A11yCoreBuilder.installLiveRegionHook(driver);
+    const said = await A11yCoreBuilder.getAnnouncements(driver);
+    const texts: string[] = (said || []).map((a) => `${a.politeness}: ${a.text}`);
+    void listenerHow;
     out.push(how);
     const planned = new A11yCoreBuilder({ driver }).withWcag('2.2', 'aa').wcagLevel('aa');
     out.push(...planned.plannedChecks().map((c) => c.ruleId), ...planned.plannedCriteria().map((r) => r.id));
@@ -108,3 +115,9 @@ async function scan(): Promise<string[]> {
 }
 
 export { scan };
+
+declare const gateResult: Parameters<typeof getGatingFailures>[0];
+const gatingIds: string[] = getGatingFailures(gateResult, { failOnSeverity: SEVERITIES[2] }).map((c) => c.ruleId);
+
+declare const conditionResult: A11yCoreResult;
+const seenIn: string[] = (conditionResult.checksResults[0].occurrences[0].conditions || []).concat((conditionResult.conditionRuns || []).map((r) => r.condition));

@@ -51,6 +51,8 @@ export type CheckResultMeta = RuleMeta;
 export type CompositeResultDetails = CompositeResult['data']['details'];
 
 export interface Occurrence extends CoreOccurrence {
+  /** With .conditions(): the conditions it was found under, 'default' for the page as it was. */
+  conditions?: string[];
   /**
    * Only present when `.elementRef(true)` was used. `null` when this
    * occurrence has no single resolvable target element (e.g. `selector` was
@@ -74,6 +76,8 @@ export interface CheckResult extends Omit<CoreCheckResult, 'occurrences'> {
 
 /** surea11y's native top-level result shape -- see docs/OUTPUT_SCHEMA.md. */
 export interface A11yCoreResult extends Omit<ScanResult, 'checksResults'> {
+  /** With .conditions(): each scan's condition ('default' first) and environment. */
+  conditionRuns?: Array<{ condition: string; environment: Record<string, unknown> | null }>;
   checksResults: CheckResult[];
 }
 
@@ -130,6 +134,33 @@ export class A11yCoreBuilder {
   static installInternalsHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
 
   /**
+   * Installs @surea11y/core's opt-in listener hook (core 1.14.0 and later),
+   * so the keyboard rules see the listeners a page adds from script. Call it
+   * before driver.get(); installed as installInternalsHook() is. Resolves to
+   * the way it was installed.
+   */
+  static installListenerHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
+
+  /**
+   * Installs @surea11y/core's opt-in live-region hook (core 1.14.0 and
+   * later): live-region-announcements then also asks about a live region
+   * added with its text already in it, or shown and filled at once, and
+   * getAnnouncements() reads what the page made available to announce. Call
+   * it before driver.get(); installed as installInternalsHook() is.
+   */
+  static installLiveRegionHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
+
+  /**
+   * What the current page's live regions were given while shown and
+   * reachable, as the live-region hook recorded it, in order; null without
+   * the hook. Not what a screen reader said. Needs core 1.14.0 and
+   * binding-base 1.6.0.
+   */
+  static getAnnouncements(
+    driver: WebDriver
+  ): Promise<Array<{ text: string; politeness: 'polite' | 'assertive'; time: number }> | null>;
+
+  /**
    * Scope the scan to one region. Call multiple times for a multi-region
    * union. A selector that matches nothing scans nothing (see the result's
    * `contextMatch`); one the browser can't parse makes analyze() reject with
@@ -175,7 +206,8 @@ export class A11yCoreBuilder {
   /**
    * Where analyze() sends each scan gap instead of console.warn: called once
    * per gap, with the result of the frame it came from, and once per scan
-   * for the internals-hook note (tell them apart by `kind`). `() => {}`
+   * for each of the internals-hook and listener-hook notes (tell them apart
+   * by `kind`). `() => {}`
    * silences them, `null` goes back to console.warn. A later call replaces it.
    */
   logger(fn: ((entry: ScanGap | ScanNote, result: A11yCoreResult) => void) | null): this;
@@ -192,6 +224,15 @@ export class A11yCoreBuilder {
   reportOnly(outcomes: Outcome | Outcome[]): this;
   /** Opt in to also scanning every sub-frame on the page (including cross-origin iframes). */
   frames(enabled?: boolean): this;
+  /**
+   * Also scan the page under each condition after scanning it as it is
+   * (@surea11y/binding-base 1.6.0): a color scheme, a viewport width, or
+   * both. analyze() returns one merged result: a rule's outcome is its worst
+   * across the scans, each occurrence lists the `conditions` it appeared
+   * under, and `conditionRuns` gives each scan's environment. The viewport
+   * and scheme are put back afterwards. Not combined with frames(true) yet.
+   */
+  conditions(list: ReadonlyArray<ScanCondition> | null): this;
   /** Opt in to resolving each fail/cantTell occurrence's selector to a live WebElement. */
   elementRef(enabled?: boolean): this;
   /**
@@ -222,4 +263,26 @@ export class A11yCoreBuilder {
    * page's scripts broke a JavaScript built-in the engine relies on).
    */
   analyze(): Promise<A11yCoreResult | A11yCoreMultiFrameResult>;
+}
+
+/** The four severities, least to most severe (@surea11y/binding-base 1.6.0 and later). */
+export const SEVERITIES: ReadonlyArray<Severity>;
+
+/**
+ * The failing rule results that should fail a test: every `fail`, or with
+ * `failOnSeverity` only those whose severity is that level or above, as
+ * `surea11y scan --fail-on-severity` counts them. `fail` keeps its meaning;
+ * the level only picks which failures stop the test. Throws a TypeError for
+ * a level that is not a severity. From @surea11y/binding-base 1.6.0.
+ */
+export function getGatingFailures(
+  input: A11yCoreResult | ReadonlyArray<CheckResult>,
+  opts?: { failOnSeverity?: Severity }
+): CheckResult[];
+
+/** A condition to scan the page under with .conditions(). */
+export interface ScanCondition {
+  colorScheme?: 'light' | 'dark';
+  /** The viewport's width in CSS pixels; its height is kept. */
+  width?: number;
 }
