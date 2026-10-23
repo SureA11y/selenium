@@ -118,3 +118,6 @@ export { scan };
 
 declare const gateResult: Parameters<typeof getGatingFailures>[0];
 const gatingIds: string[] = getGatingFailures(gateResult, { failOnSeverity: SEVERITIES[2] }).map((c) => c.ruleId);
+
+declare const conditionResult: A11yCoreResult;
+const seenIn: string[] = (conditionResult.checksResults[0].occurrences[0].conditions || []).concat((conditionResult.conditionRuns || []).map((r) => r.condition));
