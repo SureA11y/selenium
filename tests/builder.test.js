@@ -975,10 +975,13 @@ test('A11yCoreBuilder: elementRef(true) resolves a shadow-DOM occurrence through
     const [occurrence] = rule.occurrences;
     assert.deepStrictEqual(occurrence.shadowHostSelectors, ['#host']);
 
-    // The selector alone, looked up in the document, finds the light-DOM image.
-    const fromDocument = await driver.findElements(By.css(occurrence.selector));
-    assert.ok(fromDocument.length > 0);
-    assert.match(await readProp(driver, fromDocument[0], 'src'), /light\.png$/);
+    // The selector alone, looked up in the document, misses the shadow-DOM
+    // image: it finds the light-DOM one, or (with @surea11y/core 1.14.0,
+    // whose selector keeps its first step to the shadow root's children,
+    // `main:not(* > *) > img`) nothing.
+    for (const found of await driver.findElements(By.css(occurrence.selector))) {
+      assert.match(await readProp(driver, found, 'src'), /light\.png$/);
+    }
 
     assert.ok(occurrence.elementHandle, 'expected a WebElement for the shadow-DOM image');
     assert.match(await readProp(driver, occurrence.elementHandle, 'src'), /shadow\.png$/);
