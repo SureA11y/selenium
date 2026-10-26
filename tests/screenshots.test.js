@@ -54,11 +54,13 @@ const CHILD = `<!doctype html><html lang="en"><head><title>Child</title></head><
 <img id="framed" src="${GIF}" width="70" height="35" style="background:rgb(0,128,128)"></main>
 </body></html>`;
 
-// The colour each flagged image is, by where core says it is.
+// The colour each flagged image is, by where core says it is. An element
+// at the top of a shadow root keeps its first step to the root's own
+// children (`img:not(* > *)`, @surea11y/core 1.14.0).
 const COLOURS = {
   '#top': [255, 165, 0],
   '#inner': [0, 128, 0],
-  'html > body > main > x-card >>> img': [128, 0, 128],
+  'html > body > main > x-card >>> img:not(* > *)': [128, 0, 128],
   '#framed': [0, 128, 128]
 };
 
@@ -141,7 +143,7 @@ test('screenshots(): pictures each flagged element in every frame, says why for 
     assert.strictEqual(results.frames.length, 2);
 
     const top = new Map(results.topFrame.checksResults[0].occurrences.map((o) => [where(o), o]));
-    for (const name of ['#top', '#inner', 'html > body > main > x-card >>> img']) {
+    for (const name of ['#top', '#inner', 'html > body > main > x-card >>> img:not(* > *)']) {
       assert.ok(top.has(name), `${name} is not among ${[...top.keys()].join(', ')}`);
       assertColour(top.get(name).screenshot, 2, COLOURS[name], name);
     }
