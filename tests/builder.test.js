@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { By } = require('selenium-webdriver');
-const { A11yCoreBuilder, EngineError, getScanGaps } = require('../src/index.js');
+const { A11yCoreBuilder, EngineError, formatFailures, getScanGaps } = require('../src/index.js');
 const { buildDriver, readProp, settle } = require('./driver.js');
 
 // Shared across the customRules tests below -- reported outcome depends on
@@ -1442,125 +1442,159 @@ test('A11yCoreBuilder: plannedChecks() and plannedCriteria() list what analyze()
   }
 });
 
-// --- @surea11y/core 1.14 -------------------------------------------------------------
+// --- @surea11y/core 1.14: steps for questions, the listener and live-region hooks
 
-// The listener hook needs @surea11y/core 1.14.0, and its note
-// @surea11y/binding-base 1.6.0; these tests are skipped with older ones.
-const HAS_LISTENER_HOOK = typeof require('@surea11y/core').listenerHookScript === 'function';
-const HAS_LISTENER_NOTE = require('@surea11y/binding-base').getScanNotes({
-  checksResults: [{ outcome: 'cantTell', occurrences: [{ selector: 'div', data: { details: { reasonCode: 'CLICK_HANDLER_NO_KEY_HANDLER' } } }] }]
-}).some((n) => n.kind === 'listener-hook');
-const NEEDS_HOOK = !HAS_LISTENER_HOOK && 'needs @surea11y/core 1.14.0';
-const NEEDS_NOTE = !(HAS_LISTENER_HOOK && HAS_LISTENER_NOTE) && 'needs @surea11y/core 1.14.0 and @surea11y/binding-base 1.6.0';
-
-// A custom button given its click listener from script, with no key listener
-// anywhere: Enter and Space do nothing. Without the listener hook the scan
-// can't see the listener; with it, the button fails.
-const SCRIPTED_BUTTON = 'data:text/html,' + encodeURIComponent(
-  '<!doctype html><html lang="en"><head><title>t</title></head><body><main><h1>Hi</h1>' +
-  '<div id="save" role="button" tabindex="0">Save</div>' +
-  "<script>document.getElementById('save').addEventListener('click', () => {});</script>" +
-  '</main></body></html>'
-);
-
-function listenerFinding(result) {
-  const check = result.checksResults.find((r) => r.ruleId === 'click-handler-keyboard-operable');
-  return [check.outcome, check.occurrences.map((o) => o.data.details.reasonCode)];
+function htmlPage(body, head = '') {
+  return 'data:text/html,' + encodeURIComponent(
+    `<!doctype html><html lang="en"><head><title>t</title>${head}</head><body><main><h1>Hi</h1>${body}</main></body></html>`
+  );
 }
 
-test('A11yCoreBuilder.installListenerHook(): a button given its click listener from script is unseen without it, and fails with it, through BiDi or the DevTools protocol', { skip: NEEDS_HOOK }, async () => {
+test('A11yCoreBuilder: a question in the result says how to answer it, and formatFailures() lists it after the failures', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(htmlPage('<h3>Skipped</h3><img src="a.png">'));
+    const results = await new A11yCoreBuilder({ driver }).withRules(['heading-order', 'img-alt-present']).analyze();
+    const [question] = results.checksResults.find((r) => r.ruleId === 'heading-order').occurrences;
+    assert.strictEqual(question.lean.toward, 'fail');
+    assert.ok(question.howToCheck.steps.length, 'the steps the in-page engine leaves out are added');
+    const text = formatFailures(results, { howToCheck: true });
+    assert.match(text, /^1\) img-alt-present \(serious\): /);
+    assert.match(text, /\n2\) heading-order \(minor, likely fails\): /);
+    assert.match(text, /\n {3}How to check:\n {5}1\. /);
+  } finally {
+    await driver.quit();
+  }
+});
+
+const SCRIPTED_BUTTON =
+  '<div role="button" tabindex="0" class="save">Save</div>' +
+  '<script>document.querySelector(".save").addEventListener("click", () => {});</script>';
+
+test('A11yCoreBuilder.installListenerHook(): a button given its click listener from script is judged with it, and not without', async () => {
   const plain = await buildDriver();
   try {
-    await plain.get(SCRIPTED_BUTTON);
-    const before = await new A11yCoreBuilder({ driver: plain }).withRules('click-handler-keyboard-operable').analyze();
-    assert.strictEqual(outcomeOf(before, 'click-handler-keyboard-operable'), 'notApplicable');
+    await plain.get(htmlPage(SCRIPTED_BUTTON));
+    const before = await new A11yCoreBuilder({ driver: plain }).logger(() => {}).withRules('click-handler-keyboard-operable').analyze();
     assert.strictEqual(before.engine.environment.listenerHook, undefined);
+    assert.notStrictEqual(outcomeOf(before, 'click-handler-keyboard-operable'), 'fail', 'without the hook the listener is not seen');
   } finally {
     await plain.quit();
   }
 
-  for (const [bidi, how] of [[true, 'bidi'], [false, 'cdp']]) {
-    const driver = await buildDriver(undefined, { bidi });
-    try {
-      assert.strictEqual(await A11yCoreBuilder.installListenerHook(driver), how);
-      assert.strictEqual(await A11yCoreBuilder.installInternalsHook(driver), how);
-      await driver.get(SCRIPTED_BUTTON);
-      const after = await new A11yCoreBuilder({ driver }).withRules('click-handler-keyboard-operable').analyze();
-      assert.strictEqual(after.engine.environment.listenerHook, 'early', how);
-      assert.strictEqual(after.engine.environment.internalsHook, 'early', how);
-      assert.deepStrictEqual(listenerFinding(after), ['fail', ['CLICK_HANDLER_NO_KEY_LISTENER']], how);
-    } finally {
-      await driver.quit();
+  const driver = await buildDriver();
+  try {
+    assert.strictEqual(await A11yCoreBuilder.installListenerHook(driver), 'cdp');
+    await driver.get(htmlPage(SCRIPTED_BUTTON));
+    const after = await new A11yCoreBuilder({ driver }).withRules('click-handler-keyboard-operable').analyze();
+    assert.strictEqual(after.engine.environment.listenerHook, 'early');
+    assert.strictEqual(outcomeOf(after, 'click-handler-keyboard-operable'), 'fail');
+    const [found] = after.checksResults[0].occurrences;
+    assert.strictEqual(found.data.details.reasonCode, 'CLICK_HANDLER_NO_KEY_LISTENER');
+  } finally {
+    await driver.quit();
+  }
+});
+
+test('A11yCoreBuilder.installListenerHook(): in a BiDi session it runs in every frame', async () => {
+  const inner = `<!doctype html><html lang="en"><head><title>f</title></head><body>${SCRIPTED_BUTTON}</body></html>`;
+  const url = htmlPage(`${SCRIPTED_BUTTON}<iframe title="Form" srcdoc="${srcdoc(inner)}"></iframe>`);
+  const driver = await buildDriver(undefined, { bidi: true });
+  try {
+    assert.strictEqual(await A11yCoreBuilder.installListenerHook(driver), 'bidi');
+    await driver.get(url);
+    await settle();
+    const results = await new A11yCoreBuilder({ driver }).withRules('click-handler-keyboard-operable').frames(true).analyze();
+    assert.strictEqual(results.frames.length, 1);
+    for (const frame of [results.topFrame, ...results.frames]) {
+      assert.strictEqual(frame.engine.environment.listenerHook, 'early', frame.url);
+      assert.strictEqual(outcomeOf(frame, 'click-handler-keyboard-operable'), 'fail', frame.url);
     }
+  } finally {
+    await driver.quit();
   }
 });
 
-test('A11yCoreBuilder.installListenerHook() rejects a session with no before-load script, and anything but a WebDriver', async () => {
-  const classic = { getCapabilities: async () => new Map([['browserName', 'safari']]) };
-  // With a core too old to have the hook, that is what the call says first.
-  await assert.rejects(
-    () => A11yCoreBuilder.installListenerHook(classic),
-    HAS_LISTENER_HOOK
-      ? /installListenerHook\(\): this session has no way to run a script before the page loads.*enableBidi\(\)/
-      : /needs @surea11y\/core 1\.14\.0 or later/
-  );
-  for (const bad of [undefined, null, {}, { executeScript() {} }]) {
-    await assert.rejects(() => A11yCoreBuilder.installListenerHook(bad), TypeError);
-  }
-});
-
-const HAS_LIVE_REGION_HOOK = typeof require('@surea11y/core').liveRegionHookScript === 'function';
-const HAS_ANNOUNCEMENTS = typeof require('@surea11y/binding-base').createInPageAnnouncements === 'function';
-const NEEDS_LIVE_REGIONS =
-  !(HAS_LIVE_REGION_HOOK && HAS_ANNOUNCEMENTS) && 'needs @surea11y/core 1.14.0 and @surea11y/binding-base 1.6.0';
-const LIVE_REGIONS = 'data:text/html,' + encodeURIComponent(
-  '<!doctype html><html lang="en"><head><title>t</title></head><body><main><h1>Hi</h1>' +
-  '<div id="status" role="status"></div><div id="toasts"></div></main></body></html>'
-);
-
-test('A11yCoreBuilder.installLiveRegionHook(): getAnnouncements() reads what live regions were given, and a region added with its text is asked about, through BiDi or the DevTools protocol', { skip: NEEDS_LIVE_REGIONS }, async () => {
+test('A11yCoreBuilder.announcements(): what the live regions were given, each with its region, and null without the hook', async () => {
   const plain = await buildDriver();
   try {
-    await plain.get(LIVE_REGIONS);
-    assert.strictEqual(await A11yCoreBuilder.getAnnouncements(plain), null);
+    await plain.get(htmlPage('<div id="status" aria-live="polite"></div>'));
+    assert.strictEqual(await A11yCoreBuilder.announcements(plain), null);
   } finally {
     await plain.quit();
   }
 
-  for (const [bidi, how] of [[true, 'bidi'], [false, 'cdp']]) {
+  for (const bidi of [false, true]) {
     const driver = await buildDriver(undefined, { bidi });
     try {
-      assert.strictEqual(await A11yCoreBuilder.installLiveRegionHook(driver), how);
-      await driver.get(LIVE_REGIONS);
-      await driver.executeScript("document.getElementById('status').textContent = 'Saved';");
-      await driver.executeScript("document.getElementById('toasts').innerHTML = '<div role=\"status\">Copied</div>';");
-      const said = await A11yCoreBuilder.getAnnouncements(driver);
-      assert.deepStrictEqual(said.map((a) => [a.text, a.politeness]), [['Saved', 'polite']], how);
-      assert.strictEqual(typeof said[0].time, 'number', how);
-
+      assert.strictEqual(await A11yCoreBuilder.installLiveRegionHook(driver), bidi ? 'bidi' : 'cdp');
+      await driver.get(htmlPage('<div id="status" aria-live="polite"></div><iframe title="Empty" srcdoc="<p>f</p>"></iframe>'));
+      await driver.executeScript(() => { document.getElementById('status').textContent = 'Saved'; });
+      // Read from the top-level document, wherever the driver was switched.
+      await driver.switchTo().frame(await driver.findElement(By.css('iframe')));
+      const said = await A11yCoreBuilder.announcements(driver);
+      assert.deepStrictEqual(said.map((a) => [a.text, a.politeness, a.selector]), [['Saved', 'polite', '#status']]);
+      assert.strictEqual(await driver.executeScript('return window === window.top;'), true);
       const results = await new A11yCoreBuilder({ driver }).withRules('live-region-announcements').analyze();
-      assert.strictEqual(results.engine.environment.liveRegionHook, 'early', how);
-      const check = results.checksResults.find((r) => r.ruleId === 'live-region-announcements');
-      assert.deepStrictEqual(
-        check.occurrences.map((o) => [o.data.details.reasonCode, o.data.details.text]),
-        [['LIVE_REGION_INSERTED_WITH_CONTENT', 'Copied']],
-        how
-      );
+      assert.strictEqual(results.engine.environment.liveRegionHook, 'early');
     } finally {
       await driver.quit();
     }
   }
 });
 
-test('A11yCoreBuilder.installLiveRegionHook() and getAnnouncements() reject what they cannot use', async () => {
-  for (const bad of [undefined, null, {}]) {
-    await assert.rejects(() => A11yCoreBuilder.installLiveRegionHook(bad), TypeError);
-    await assert.rejects(() => A11yCoreBuilder.getAnnouncements(bad), TypeError);
+test('A11yCoreBuilder: the hook installers want a Selenium WebDriver, and share installInternalsHook()\'s two ways in', async () => {
+  for (const method of ['installListenerHook', 'installLiveRegionHook']) {
+    await assert.rejects(() => A11yCoreBuilder[method]({}), (e) => e instanceof TypeError && e.message.includes(method));
+    const classic = { getCapabilities: async () => new Map([['browserName', 'safari']]) };
+    await assert.rejects(() => A11yCoreBuilder[method](classic), new RegExp(`${method}\\(\\): this session has no way to run a script before the page loads`));
+  }
+  const scripts = [];
+  const cdp = {
+    getCapabilities: async () => new Map([['browserName', 'chrome']]),
+    sendDevToolsCommand: async (command, { source }) => { scripts.push([command, source]); }
+  };
+  assert.strictEqual(await A11yCoreBuilder.installListenerHook(cdp), 'cdp');
+  assert.strictEqual(await A11yCoreBuilder.installLiveRegionHook(cdp), 'cdp');
+  const core = require('@surea11y/core');
+  assert.deepStrictEqual(scripts, [
+    ['Page.addScriptToEvaluateOnNewDocument', core.listenerHookScript()],
+    ['Page.addScriptToEvaluateOnNewDocument', core.liveRegionHookScript()]
+  ]);
+});
+
+test('A11yCoreBuilder.installLiveRegionHook(): a live region the page adds with its text already in it is asked about', async () => {
+  const driver = await buildDriver();
+  try {
+    await A11yCoreBuilder.installLiveRegionHook(driver);
+    await driver.get(htmlPage('<div id="toasts"></div>'));
+    await driver.executeScript("document.getElementById('toasts').innerHTML = '<div role=\"status\">Copied</div>';");
+    const results = await new A11yCoreBuilder({ driver }).withRules('live-region-announcements').analyze();
+    const check = results.checksResults.find((r) => r.ruleId === 'live-region-announcements');
+    assert.deepStrictEqual(
+      check.occurrences.map((o) => [o.data.details.reasonCode, o.data.details.text]),
+      [['LIVE_REGION_INSERTED_WITH_CONTENT', 'Copied']]
+    );
+  } finally {
+    await driver.quit();
   }
 });
 
-const HAS_CONDITIONS = typeof require('@surea11y/binding-base').mergeConditionResults === 'function';
-const NEEDS_CONDITIONS = !HAS_CONDITIONS && 'needs @surea11y/binding-base 1.6.0';
+test('A11yCoreBuilder: without the listener hook, analyze() says once per scan which findings it would have decided', async (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => { warnings.push(String(msg)); });
+  const driver = await buildDriver();
+  try {
+    await driver.get(htmlPage('<div role="button" tabindex="0" onclick="void save()">Save</div>'));
+    await new A11yCoreBuilder({ driver }).withRules('click-handler-keyboard-operable').analyze();
+    const notes = warnings.filter((w) => /judged without seeing the listeners the page adds from script/.test(w));
+    assert.strictEqual(notes.length, 1, JSON.stringify(warnings));
+    assert.match(notes[0], /installListenerHook\(\)/);
+  } finally {
+    await driver.quit();
+  }
+});
+
 // Reads well in the light scheme; in the dark one its text is #444 on #222.
 const DARK_CONTRAST = 'data:text/html,' + encodeURIComponent(
   '<!doctype html><html lang="en"><head><title>t</title><style>' +
@@ -1569,7 +1603,7 @@ const DARK_CONTRAST = 'data:text/html,' + encodeURIComponent(
   '</style></head><body><main><h1>Hi</h1><p id="note">Read me</p></main></body></html>'
 );
 
-test('A11yCoreBuilder.conditions(): a failure only in dark mode fails the merged result, labelled, and the page is put back', { skip: NEEDS_CONDITIONS }, async () => {
+test('A11yCoreBuilder.conditions(): a failure only in dark mode fails the merged result, labelled, and the page is put back', async () => {
   const driver = await buildDriver();
   try {
     await driver.get(DARK_CONTRAST);
@@ -1596,7 +1630,7 @@ test('A11yCoreBuilder.conditions(): a failure only in dark mode fails the merged
   }
 });
 
-test('A11yCoreBuilder.conditions(): a color scheme without the DevTools protocol is refused before any scan', { skip: NEEDS_CONDITIONS }, async () => {
+test('A11yCoreBuilder.conditions(): a color scheme without the DevTools protocol is refused before any scan', async () => {
   let scripts = 0;
   const driver = { executeScript: async () => { scripts += 1; return {}; }, manage: () => ({ window: () => ({ getRect: async () => ({}) }) }) };
   const builder = new A11yCoreBuilder({ driver }).conditions([{ colorScheme: 'dark' }]);
@@ -1604,7 +1638,7 @@ test('A11yCoreBuilder.conditions(): a color scheme without the DevTools protocol
   assert.strictEqual(scripts, 0);
 });
 
-test('A11yCoreBuilder.conditions(): a dark scheme the caller emulated stays dark, and a width-only condition scans in it', { skip: NEEDS_CONDITIONS }, async () => {
+test('A11yCoreBuilder.conditions(): a dark scheme the caller emulated stays dark, and a width-only condition scans in it', async () => {
   const driver = await buildDriver();
   try {
     await driver.get(DARK_CONTRAST);
@@ -1623,7 +1657,7 @@ test('A11yCoreBuilder.conditions(): a dark scheme the caller emulated stays dark
   }
 });
 
-test('A11yCoreBuilder.conditions(): without the DevTools protocol, a width resizes the window by as much and puts it back', { skip: NEEDS_CONDITIONS }, async () => {
+test('A11yCoreBuilder.conditions(): without the DevTools protocol, a width resizes the window by as much and puts it back', async () => {
   const rects = [];
   const driver = {
     executeScript: async () => ({ width: 1000, height: 700, dark: false }),
@@ -1634,20 +1668,3 @@ test('A11yCoreBuilder.conditions(): without the DevTools protocol, a width resiz
   assert.deepStrictEqual(rects, [{ width: 336, height: 800 }, { x: 0, y: 0, width: 1016, height: 800 }]);
 });
 
-test('A11yCoreBuilder: without the listener hook, analyze() says once per scan that it would let the engine judge those handlers', { skip: NEEDS_NOTE }, async (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => { warnings.push(String(msg)); });
-  const driver = await buildDriver();
-  try {
-    await driver.get('data:text/html,' + encodeURIComponent(
-      '<!doctype html><html lang="en"><head><title>t</title></head><body><main><h1>Hi</h1>' +
-      '<div role="button" tabindex="0" onclick="void save()">Save</div></main></body></html>'
-    ));
-    await new A11yCoreBuilder({ driver }).withRules('click-handler-keyboard-operable').analyze();
-    const notes = warnings.filter((w) => /element was asked about because the scan could not see/.test(w));
-    assert.strictEqual(notes.length, 1, JSON.stringify(warnings));
-    assert.match(notes[0], /installListenerHook\(\)/);
-  } finally {
-    await driver.quit();
-  }
-});

@@ -1,5 +1,6 @@
 import type { WebDriver, WebElement } from 'selenium-webdriver';
 import type {
+  LocatedAnnouncement,
   PackLike,
   WcagLevelInput,
   WcagVersion,
@@ -134,31 +135,29 @@ export class A11yCoreBuilder {
   static installInternalsHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
 
   /**
-   * Installs @surea11y/core's opt-in listener hook (core 1.14.0 and later),
-   * so the keyboard rules see the listeners a page adds from script. Call it
-   * before driver.get(); installed as installInternalsHook() is. Resolves to
-   * the way it was installed.
+   * Installs @surea11y/core's opt-in listener hook, so the keyboard rules
+   * see the event listeners the page adds from script. Call it before
+   * driver.get(). Installed as installInternalsHook() is. Needs
+   * @surea11y/core 1.14.0 or later.
    */
   static installListenerHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
 
   /**
-   * Installs @surea11y/core's opt-in live-region hook (core 1.14.0 and
-   * later): live-region-announcements then also asks about a live region
-   * added with its text already in it, or shown and filled at once, and
-   * getAnnouncements() reads what the page made available to announce. Call
-   * it before driver.get(); installed as installInternalsHook() is.
+   * Installs @surea11y/core's opt-in live-region hook, which records what
+   * the page's live regions are given. Call it before driver.get().
+   * Installed as installInternalsHook() is. Needs @surea11y/core 1.14.0 or
+   * later.
    */
   static installLiveRegionHook(driver: WebDriver): Promise<'bidi' | 'cdp'>;
 
   /**
-   * What the current page's live regions were given while shown and
-   * reachable, as the live-region hook recorded it, in order; null without
-   * the hook. Not what a screen reader said. Needs core 1.14.0 and
-   * binding-base 1.6.0.
+   * What the top-level page's live regions were given since it loaded, in
+   * order, each region named by its selector; null without the live-region
+   * hook. Texts given to a region behind an open modal dialog only with
+   * `includeBehindModal: true`. Switches the driver back to the top-level
+   * document.
    */
-  static getAnnouncements(
-    driver: WebDriver
-  ): Promise<Array<{ text: string; politeness: 'polite' | 'assertive'; time: number }> | null>;
+  static announcements(driver: WebDriver, options?: { includeBehindModal?: boolean }): Promise<LocatedAnnouncement[] | null>;
 
   /**
    * Scope the scan to one region. Call multiple times for a multi-region

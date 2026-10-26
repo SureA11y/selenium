@@ -2,11 +2,13 @@ export * from './A11yCoreBuilder';
 export {
   EngineError,
   EngineErrorCode,
+  LocatedAnnouncement,
   OccurrenceLocation,
   OccurrenceScreenshot,
   PackLike,
   PlannedCheck,
   PlannedCriterion,
+  ReviewGroup,
   ScanGap,
   ScanNote,
   ScanResultLike,

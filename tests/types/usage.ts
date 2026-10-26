@@ -19,7 +19,9 @@ import type {
   A11yCoreResult,
   CheckResult,
   CheckResultMeta,
+  LocatedAnnouncement,
   Occurrence,
+  ReviewGroup,
   Severity
 } from '../../src/index';
 
@@ -29,12 +31,15 @@ async function scan(): Promise<string[]> {
   const out: string[] = [];
   try {
     const how: 'bidi' | 'cdp' = await A11yCoreBuilder.installInternalsHook(driver);
-    const listenerHow: 'bidi' | 'cdp' = await A11yCoreBuilder.installListenerHook(driver);
-    const liveRegionHow: 'bidi' | 'cdp' = await A11yCoreBuilder.installLiveRegionHook(driver);
-    const said = await A11yCoreBuilder.getAnnouncements(driver);
-    const texts: string[] = (said || []).map((a) => `${a.politeness}: ${a.text}`);
-    void listenerHow;
     out.push(how);
+    const listening: 'bidi' | 'cdp' = await A11yCoreBuilder.installListenerHook(driver);
+    const recording: 'bidi' | 'cdp' = await A11yCoreBuilder.installLiveRegionHook(driver);
+    out.push(listening, recording);
+    const said = await A11yCoreBuilder.announcements(driver, { includeBehindModal: true });
+    const regions: Array<string | null> = (said ?? []).map((a: LocatedAnnouncement) => a.selector);
+    void regions;
+    const group: ReviewGroup = 'leanFail';
+    out.push(formatFailures({ checksResults: [] }, { outcomes: ['fail', group], howToCheck: true }));
     const planned = new A11yCoreBuilder({ driver }).withWcag('2.2', 'aa').wcagLevel('aa');
     out.push(...planned.plannedChecks().map((c) => c.ruleId), ...planned.plannedCriteria().map((r) => r.id));
 
