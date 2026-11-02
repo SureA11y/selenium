@@ -84,7 +84,7 @@ const results = await builder.analyze();
 
 `.exclude(selector)` above excludes globally. Pass a second argument to scope it to specific rule IDs instead: `.exclude('.mat-select', { rules: ['aria-required-children'] })` skips `.mat-select` for that rule only — every other rule still sees it. Global and rule-scoped `.exclude()` calls compose freely.
 
-**A scope that matches nothing scans nothing.** Since `@surea11y/core` 1.10.0, an `.include()` selector that matches no element is not scanned: when none of them matches, every rule reports `notApplicable`, which on its own reads like a clean page. The result's `contextMatch` (`{ elementCount, unmatchedSelectors }`, or `null` without `.include()`) says how the scope resolved, and `getScanGaps(results)` lists what the scan left out: a scope that matched nothing (`context-not-found`), part of a scope that matched nothing (`context-partly-not-found`), each custom rule that did not run (`custom-rule-skipped`, from the result's `skippedCustomRules`; one you excluded yourself with `.disableRules()` is not a gap), and each pack that did not run (`pack-skipped`, from the result's `skippedPacks`; see [Scanning with packs](#scanning-with-packs-standards-checklists-and-your-own-rules)). `formatFailures(results)`, below, includes them. `analyze()` also prints each gap with `console.warn` (per frame with `.frames(true)`), such as `@surea11y/selenium (https://example.com/): Nothing was scanned: the scan scope matched no element ("#main").`, since core's own warning goes to the browser's console, which a Selenium run doesn't show.
+**A scope that matches nothing scans nothing.** Since `@surea11y/core` 1.10.0, an `.include()` selector that matches no element is not scanned: when none of them matches, every rule reports `notApplicable`, which on its own reads like a clean page. The result's `contextMatch` (`{ elementCount, unmatchedSelectors }`, or `null` without `.include()`) says how the scope resolved, and `getScanGaps(results)` lists what the scan left out: a scope that matched nothing (`context-not-found`), part of a scope that matched nothing (`context-partly-not-found`), each custom rule that did not run (`custom-rule-skipped`, from the result's `skippedCustomRules`; one you excluded yourself with `.disableRules()` is not a gap), each pack that did not run (`pack-skipped`, from the result's `skippedPacks`; see [Scanning with packs](#scanning-with-packs-standards-checklists-and-your-own-rules)), and, with `@surea11y/core` 1.15, each profile a scan of several did not run (`profile-not-run`, from the result's `engine.profilesNotRun`). `formatFailures(results)`, below, includes them. `analyze()` also prints each gap with `console.warn` (per frame with `.frames(true)`), such as `@surea11y/selenium (https://example.com/): Nothing was scanned: the scan scope matched no element ("#main").`, since core's own warning goes to the browser's console, which a Selenium run doesn't show.
 
 That warning is the right default for a test run. A project that already handles gaps itself can take them over with `.logger(fn)`: `fn(gap, result)` is called once per gap, with the gap as `getScanGaps()` gives it and the result of the frame it came from, instead of `console.warn`. A scanning service that shows gaps to its users, say, can send them once to its own structured log, rather than also printing a loose line on the server's console for every scan:
 
@@ -532,6 +532,24 @@ results.engine.profile; // 'acme-web-2026'
 // A checklist's items, each one result, beside core's WCAG rollups:
 results.rulesResults.filter((r) => r.meta && r.meta.standard === 'Acme web policy');
 ```
+
+**Several profiles at once.** `.options({ profile })` also takes a list, a pack's profile beside WCAG's or another pack's (`@surea11y/core` 1.15 and later). Each profile judges the page as it would alone, and the result reads as one profile with the rules of all, in the top frame and in each frame with `.frames(true)`:
+
+```js
+const waiAria = require('@surea11y/pack-wai-aria');
+
+const results = await new A11yCoreBuilder({ driver })
+  .withPacks(waiAria)
+  .options({ profile: ['wcag22-aa', 'wai-aria-1.2'] })
+  .analyze();
+
+results.engine.profiles; // ['wcag22-aa', 'wai-aria-1.2']
+// A rule both run is one check: its outcome is the worst, and its verdicts
+// say what each profile makes of it.
+results.checksResults.find((c) => c.ruleId === 'aria-allowed-attr').verdicts;
+```
+
+A profile that didn't run is in `results.engine.profilesNotRun`, with why, and `getScanGaps()` reports it as `'profile-not-run'`. Core's [`OUTPUT_SCHEMA.md`](https://github.com/SureA11y/core/blob/main/docs/OUTPUT_SCHEMA.md#several-profiles) has the whole result.
 
 A pack's own rules appear in `checksResults` like core's, with ids that start with its namespace (`acme-no-autoplay`). Without its profile, a pack's rules run only when selected, with `.withRules()` or by a tag. `@surea11y/core`'s HTML, SARIF and JUnit reports show a standard's or a checklist's items in a section of their own. Pass an array, or call `.withPacks()` again, to scan with several packs.
 
