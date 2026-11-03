@@ -92,7 +92,8 @@ async function scan(): Promise<string[]> {
     for (const gap of getScanGaps(result)) {
       if (gap.kind === 'custom-rule-skipped') out.push(gap.rule.reason);
       else if (gap.kind === 'pack-skipped') out.push(String(gap.pack.name));
-      else out.push(gap.selectors.join(', '));
+      // A gap of a kind added later, such as profile-not-run, has no selectors.
+      else if ('selectors' in gap) out.push(gap.selectors.join(', '));
     }
 
     const check: CheckResult = result.checksResults[0];
