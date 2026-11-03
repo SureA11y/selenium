@@ -6,6 +6,23 @@ const { By } = require('selenium-webdriver');
 const { A11yCoreBuilder, EngineError, formatFailures, getScanGaps } = require('../src/index.js');
 const { buildDriver, readProp, settle } = require('./driver.js');
 
+// How .frames(true) reads frames as core does needs binding-base's frames
+// helpers and a core that takes engineOptions.embeddedAriaHidden.
+const FRAME_POLICY = (() => {
+  if (typeof require('@surea11y/binding-base').readFrameElement !== 'function') {
+    return 'needs a binding-base with the frames helpers';
+  }
+  try {
+    require('@surea11y/core/testing').runa11yCoreOnHtml('<p>x</p>', {
+      engineOptions: { embeddedAriaHidden: true, strictOptions: true },
+      runOnly: ['img-alt-present']
+    });
+    return false;
+  } catch {
+    return 'needs a core that takes embeddedAriaHidden';
+  }
+})();
+
 // Shared across the customRules tests below -- reported outcome depends on
 // whether ctx.document has a .my-widget element. runInPage must be a
 // function-source STRING, not a live function -- engineOptions crosses an
@@ -654,6 +671,43 @@ test('A11yCoreBuilder: frames(true) scans a sub-frame and keeps its findings sep
   }
 });
 
+
+test('A11yCoreBuilder: frames(true) reads frames as core does -- hidden, excluded, out-of-scope and empty ones left out, an aria-hidden one scanned as aria-hidden, one in a shadow root found, each under its own url', { skip: FRAME_POLICY }, async () => {
+  const driver = await buildDriver();
+  try {
+    const inner = (body) => encodeURIComponent(`<html><body>${body}</body></html>`).replace(/'/g, '%27');
+    await driver.get(
+      'data:text/html,<html><body><main id="main">' +
+      `<iframe id="hid" style="display:none" srcdoc="${inner('<img src=a.png>')}"></iframe>` +
+      `<div class="ad"><iframe id="exc" srcdoc="${inner('<img src=a.png>')}"></iframe></div>` +
+      `<div aria-hidden="true"><iframe id="ah" srcdoc="${inner('<img src=a.png>')}"></iframe></div>` +
+      '<iframe id="empty"></iframe>' +
+      '<x-host></x-host>' +
+      '</main>' +
+      `<iframe id="out" srcdoc="${inner('<img src=a.png>')}"></iframe>` +
+      '<script>document.querySelector("x-host").attachShadow({mode:"open"}).innerHTML=' +
+      `'<iframe srcdoc="${inner('<img src=s.png>')}"></iframe>'` +
+      '</script></body></html>'
+    );
+    await settle();
+
+    const results = await new A11yCoreBuilder({ driver, url: 'https://example.test/top' })
+      .include('#main')
+      .exclude('.ad')
+      .frames(true)
+      .analyze();
+    assert.strictEqual(results.topFrame.url, 'https://example.test/top');
+    assert.strictEqual(results.frames.length, 2, JSON.stringify(results.frames.map((f) => f.url || f.error)));
+    const fails = (f) => f.checksResults.filter((r) => r.outcome === 'fail').map((r) => r.ruleId);
+    const [ah, shadowed] = results.frames;
+    assert.ok(!fails(ah).includes('img-alt-present'), 'out of the accessibility tree, a name is no rule');
+    assert.ok(fails(shadowed).includes('img-alt-present'), 'a frame in a shadow root is scanned');
+    assert.ok(results.frames.every((f) => f.url !== 'https://example.test/top'), 'a frame keeps its own url');
+  } finally {
+    await driver.quit();
+  }
+});
+
 test('A11yCoreBuilder: frames(true) recurses into nested iframes, flattening every depth into one frames array', async () => {
   const driver = await buildDriver();
   try {
@@ -925,13 +979,16 @@ test('A11yCoreBuilder: withRules()/withTags()/disableRules()/disableTags() rejec
   }
 });
 
-test('A11yCoreBuilder: include() combined with frames(true) scopes the top frame only; each sub-frame is scanned whole', async () => {
+test('A11yCoreBuilder: include() combined with frames(true) scopes the top frame and which of its frames are scanned; each scanned whole', { skip: FRAME_POLICY }, async () => {
   const driver = await buildDriver();
   try {
     await driver.get(
       'data:text/html,<html><body>' +
-      '<main id="main"><img src="a.png" alt=""></main><img src="outside.png">' +
-      '<iframe srcdoc="%3Chtml%3E%3Cbody%3E%3Cimg src=b.png%3E%3C/body%3E%3C/html%3E"></iframe>' +
+      '<main id="main"><img src="a.png" alt="">' +
+      '<iframe srcdoc="%3Chtml%3E%3Cbody%3E%3Cimg src=b.png%3E%3C/body%3E%3C/html%3E"></iframe></main>' +
+      '<img src="outside.png">' +
+      // Outside include()'s roots: left out, as core's own scan across frames leaves it.
+      '<iframe srcdoc="%3Chtml%3E%3Cbody%3E%3Cimg src=c.png%3E%3C/body%3E%3C/html%3E"></iframe>' +
       '</body></html>'
     );
     await settle();

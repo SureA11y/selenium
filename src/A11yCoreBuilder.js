@@ -4,14 +4,21 @@ const { By } = require('selenium-webdriver');
 const core = require('@surea11y/core');
 
 const { runa11yCoreInPage } = core;
+const bindingBase = require('@surea11y/binding-base');
 const {
   A11yCoreBuilderBase,
   createInPageScan,
   rethrowEngineError,
   queryOccurrenceElement,
   cropViewportScreenshot,
-  planScreenshots
-} = require('@surea11y/binding-base');
+  planScreenshots,
+  // How .frames(true) finds and reads each frame (binding-base 1.7 and later).
+  findFrameElements,
+  readFrameElement,
+  isFrameDocumentEmpty,
+  frameReadingOptions
+} = bindingBase;
+const frameEngineOptions = bindingBase.frameEngineOptions || ((engineOptions) => engineOptions);
 
 // core's runa11yCoreInPage, wrapped so an engine error comes back through
 // executeScript() with its `code` (see analyze()). Built once: the wrapper
@@ -288,18 +295,20 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // it from the top-level document ([] for that document), or null for
     // whatever frame the driver is in when analyze() is called without
     // frames(true): what screenshots need to reach it again.
-    const runInCurrentFrame = async (scanContext, path) => {
-      const frameUrl = this._url || (await this._safeCurrentFrameUrl());
+    const runInCurrentFrame = async (scanContext, path, frameOptions = engineOptions) => {
+      // url() names the top page only; a frame is named by its own address.
+      const isTop = !Array.isArray(path) || path.length === 0;
+      const frameUrl = (isTop && this._url) || (await this._safeCurrentFrameUrl());
       if (packScript) await driver.executeScript(packScript);
       // The text of the style sheets the frame can't read, fetched from Node
       // (binding-base 1.6.0 and core 1.14.0; nothing with older ones), in the frame
       // the driver is in.
-      const frameEngineOptions =
+      const scanOptions =
         typeof this._styleSheetEngineOptions === 'function'
-          ? await this._styleSheetEngineOptions(null, engineOptions)
-          : engineOptions;
+          ? await this._styleSheetEngineOptions(null, frameOptions)
+          : frameOptions;
       const result = rethrowEngineError(
-        await driver.executeScript(inPageScan, frameUrl, scanContext, frameEngineOptions, runOnly)
+        await driver.executeScript(inPageScan, frameUrl, scanContext, scanOptions, runOnly)
       );
       this._warnScanGaps(result, '@surea11y/selenium');
       // Right after the frame's scan, before reportOnly(): nothing unless
@@ -345,10 +354,17 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // matches nothing scans nothing, so passing them on would leave every
     // frame without that element unscanned; before, it fell back to the
     // whole frame. exclude() still applies in every frame.
-    const scanSubFrames = async (path) => {
+    //
+    // Each frame is read as core's own scan across frames reads it
+    // (binding-base's frames helpers, 1.7 and later): one the page doesn't
+    // show, that is excluded or outside include()'s roots, or that shows
+    // nothing is left out with its frames; one under aria-hidden is scanned
+    // as aria-hidden, and so are its frames. Frames in open shadow roots are
+    // found too.
+    const scanSubFrames = async (path, ariaHiddenAbove = false) => {
       let iframes;
       try {
-        iframes = await driver.findElements(By.css(FRAME_SELECTOR));
+        iframes = await this._frameElements();
       } catch (e) {
         // Couldn't even enumerate this document's frames -- nothing to add.
         return;
@@ -357,10 +373,16 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
         const iframe = iframes[i];
         let switched = false;
         try {
+          const reading = await this._readFrame(iframe, engineOptions, contextSelector, path.length === 0);
+          if (reading.skipped) continue;
           await driver.switchTo().frame(iframe);
           switched = true;
-          frames.push(this._applyReportOnly(await runInCurrentFrame(null, path.concat(i))));
-          await scanSubFrames(path.concat(i));
+          if (await this._isCurrentFrameEmpty()) continue;
+          const ariaHidden = ariaHiddenAbove || !!reading.ariaHidden;
+          frames.push(this._applyReportOnly(
+            await runInCurrentFrame(null, path.concat(i), frameEngineOptions(engineOptions, { ariaHidden }))
+          ));
+          await scanSubFrames(path.concat(i), ariaHidden);
         } catch (e) {
           // A frame can detach/navigate away mid-scan, or be a sandboxed
           // frame the browser blocks scripting in -- don't let one bad frame
@@ -435,7 +457,16 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
       await this._captureScreenshots(result, null, []);
       return;
     }
-    const framePath = path.map((index, i) => ({ frame: path.slice(0, i), iframe: { index, selector: FRAME_SELECTOR } }));
+    // Each step names its <iframe> by the element itself, found again in its
+    // parent document as the frame traversal found it: a frame in a shadow
+    // root has no index among the document's own <iframe>s.
+    const framePath = [];
+    for (let i = 0; i < path.length; i++) {
+      await this._switchToPath(path.slice(0, i));
+      const elements = await this._frameElements();
+      framePath.push({ frame: path.slice(0, i), iframe: elements[path[i]] });
+    }
+    await this._switchToPath(path);
     try {
       await this._captureScreenshots(result, path, framePath);
     } finally {
@@ -544,9 +575,47 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
   async _switchToPath(path) {
     await this._driver.switchTo().defaultContent();
     for (const index of path) {
-      const iframes = await this._driver.findElements(By.css(FRAME_SELECTOR));
+      const iframes = await this._frameElements();
       if (!iframes[index]) throw new Error(`no <iframe> ${index} where the frame was`);
       await this._driver.switchTo().frame(iframes[index]);
+    }
+  }
+
+  /**
+   * The <iframe> and <frame> elements of the current document, in document
+   * order, through open shadow roots (binding-base's findFrameElements), or
+   * those a CSS query finds with an older binding-base.
+   */
+  async _frameElements() {
+    if (typeof findFrameElements !== 'function') return this._driver.findElements(By.css(FRAME_SELECTOR));
+    return this._driver.executeScript(`return (${findFrameElements.toString()})(document);`);
+  }
+
+  /**
+   * How a frame of the current document is read, from its element:
+   * `{ skipped }`, `{ ariaHidden }` or `{}`; `{}` with an older
+   * binding-base, or when the element can't be read.
+   */
+  async _readFrame(iframe, engineOptions, contextSelector, topLevel) {
+    if (typeof readFrameElement !== 'function') return {};
+    try {
+      return (await this._driver.executeScript(
+        `return (${readFrameElement.toString()})(arguments[0], arguments[1]);`,
+        iframe,
+        frameReadingOptions(engineOptions, contextSelector, topLevel)
+      )) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /** Whether the document the driver is in shows nothing. */
+  async _isCurrentFrameEmpty() {
+    if (typeof isFrameDocumentEmpty !== 'function') return false;
+    try {
+      return !!(await this._driver.executeScript(`return (${isFrameDocumentEmpty.toString()})(document);`));
+    } catch (e) {
+      return false;
     }
   }
 
