@@ -1792,3 +1792,36 @@ test('A11yCoreBuilder: frames(true) leaves out a frame behind an open modal dial
     await driver.quit();
   }
 });
+
+// Frame "a" removes frame "b" from the page while it is scanned: "b" is
+// reported as not scanned, named by its address.
+const DETACH_PAGE = 'data:text/html,' + encodeURIComponent(
+  '<!doctype html><html lang="en"><head><title>t</title></head><body>' +
+  '<iframe id="a" srcdoc="<html lang=en><title>a</title><p>a</p>"></iframe>' +
+  '<iframe id="b" src="about:blank#b"></iframe></body></html>'
+);
+const REMOVE_B = {
+  id: 'remove-frame-b',
+  meta: { title: 'Removes frame b', tags: ['custom'] },
+  runInPage: function (ctx) {
+    if (ctx.document.title === 'a') {
+      const b = ctx.document.defaultView.parent.document.getElementById('b');
+      if (b) b.remove();
+    }
+    return { outcome: 'notApplicable', occurrences: [] };
+  }
+};
+
+test('A11yCoreBuilder: frames(true) names a frame removed mid-scan by its address', async () => {
+  const driver = await buildDriver();
+  try {
+    await driver.get(DETACH_PAGE);
+    await settle();
+    const results = await new A11yCoreBuilder({ driver }).withRules(['img-alt-present', 'remove-frame-b']).withCustomRules(REMOVE_B).frames(true).analyze();
+    const gone = results.frames.find((f) => f.error);
+    assert.ok(gone, JSON.stringify(results.frames.map((f) => f.url)));
+    assert.strictEqual(gone.url, 'about:blank#b');
+  } finally {
+    await driver.quit();
+  }
+});
