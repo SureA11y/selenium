@@ -20,7 +20,7 @@ const {
 } = bindingBase;
 const frameEngineOptions = bindingBase.frameEngineOptions || ((engineOptions) => engineOptions);
 // What a frame is under, with what the frames around it are under
-// (binding-base 1.8 and later; aria-hidden and inert alike).
+// (binding-base 1.7 and later; aria-hidden and inert alike).
 const inheritFrameReading = bindingBase.inheritFrameReading || ((above, reading) => ({
   ariaHidden: !!((above && above.ariaHidden) || (reading && reading.ariaHidden)),
   inert: !!((above && above.inert) || (reading && reading.inert))
@@ -76,7 +76,8 @@ const FRAME_SELECTOR = 'iframe, frame';
  * // results.topFrame        -- same shape as the single-frame case above
  * // results.frames          -- array of the same native result shape, one per sub-frame
  *
- * include() scopes the top frame only; each sub-frame is scanned whole.
+ * include() scopes the top frame only; each sub-frame inside its roots is
+ * scanned whole.
  *
  * Unlike script-injection-based accessibility engines (which need a
  * postMessage-based protocol, runPartial/finishRun, to reach cross-origin
@@ -93,8 +94,9 @@ const FRAME_SELECTOR = 'iframe, frame';
  * frame is reached by a *stateful context switch* --
  * `driver.switchTo().frame(webElement)` changes what `driver.executeScript()`
  * runs against, and `driver.switchTo().defaultContent()` / `.parentFrame()`
- * unwind it. `.frames(true)` therefore enumerates iframes with
- * `driver.findElements(By.css('iframe, frame'))`, switches into each (and
+ * unwind it. `.frames(true)` therefore lists each document's <iframe> and
+ * <frame> elements, through open shadow roots (binding-base's
+ * findFrameElements), switches into each (and
  * recurses into nested iframes), scans, then unwinds the context, always
  * returning to the top-level document at the end even if a scan throws
  * partway (a stuck context would otherwise break whatever the caller does
@@ -169,8 +171,9 @@ const FRAME_SELECTOR = 'iframe, frame';
  * accumulates on top of the first scan's scope rather than replacing it
  * (intentional for "call include() several times for one scan" -- see above
  * -- but a footgun if you hold one instance across multiple assertions).
- * reportOnly()/frames()/elementRef()/screenshots()/withWcag()/
- * withBestPractices() are the exception: each call replaces the previous
+ * reportOnly()/frames()/elementRef()/screenshots()/conditions()/
+ * fetchStyleSheets()/withWcag()/withBestPractices()/includeMode()/
+ * wcagLevel()/logger() are the exception: each call replaces the previous
  * value rather than merging with it.
  */
 class A11yCoreBuilder extends A11yCoreBuilderBase {
@@ -504,11 +507,6 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
   }
 
   /**
-   * For binding-base's screenshots step: a PNG of `box`, CSS pixels in the
-   * top-level viewport. Selenium takes the whole viewport, whichever frame
-   * the driver is in; binding-base cuts the box out of it.
-   */
-  /**
    * The driver steps .conditions() scans need. On Chrome and Edge, the
    * DevTools protocol (driver.sendDevToolsCommand()) sets the viewport's
    * width (Emulation.setDeviceMetricsOverride, its height kept) and the
@@ -582,6 +580,11 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     };
   }
 
+  /**
+   * For binding-base's screenshots step: a PNG of `box`, CSS pixels in the
+   * top-level viewport. Selenium takes the whole viewport, whichever frame
+   * the driver is in; binding-base cuts the box out of it.
+   */
   async _captureBox(box, view) {
     return cropViewportScreenshot(await this._driver.takeScreenshot(), box, view);
   }
