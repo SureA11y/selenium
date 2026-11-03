@@ -19,6 +19,12 @@ const {
   frameReadingOptions
 } = bindingBase;
 const frameEngineOptions = bindingBase.frameEngineOptions || ((engineOptions) => engineOptions);
+// What a frame is under, with what the frames around it are under
+// (binding-base 1.8 and later; aria-hidden and inert alike).
+const inheritFrameReading = bindingBase.inheritFrameReading || ((above, reading) => ({
+  ariaHidden: !!((above && above.ariaHidden) || (reading && reading.ariaHidden)),
+  inert: !!((above && above.inert) || (reading && reading.inert))
+}));
 
 // core's runa11yCoreInPage, wrapped so an engine error comes back through
 // executeScript() with its `code` (see analyze()). Built once: the wrapper
@@ -361,7 +367,7 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
     // nothing is left out with its frames; one under aria-hidden is scanned
     // as aria-hidden, and so are its frames. Frames in open shadow roots are
     // found too.
-    const scanSubFrames = async (path, ariaHiddenAbove = false) => {
+    const scanSubFrames = async (path, above = null) => {
       let iframes;
       try {
         iframes = await this._frameElements();
@@ -378,11 +384,11 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
           await driver.switchTo().frame(iframe);
           switched = true;
           if (await this._isCurrentFrameEmpty()) continue;
-          const ariaHidden = ariaHiddenAbove || !!reading.ariaHidden;
+          const under = inheritFrameReading(above, reading);
           frames.push(this._applyReportOnly(
-            await runInCurrentFrame(null, path.concat(i), frameEngineOptions(engineOptions, { ariaHidden }))
+            await runInCurrentFrame(null, path.concat(i), frameEngineOptions(engineOptions, under))
           ));
-          await scanSubFrames(path.concat(i), ariaHidden);
+          await scanSubFrames(path.concat(i), under);
         } catch (e) {
           // A frame can detach/navigate away mid-scan, or be a sandboxed
           // frame the browser blocks scripting in -- don't let one bad frame
