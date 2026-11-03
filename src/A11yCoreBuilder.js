@@ -80,7 +80,7 @@ const FRAME_SELECTOR = 'iframe, frame';
  * scanned whole.
  *
  * Unlike script-injection-based accessibility engines (which need a
- * postMessage-based protocol, runPartial/finishRun, to reach cross-origin
+ * postMessage-based protocol to reach cross-origin
  * iframes, since they're injected as a plain <script> and are fully subject
  * to the browser's same-origin policy), this doesn't need any @surea11y/core
  * engine support: Selenium switches WebDriver
