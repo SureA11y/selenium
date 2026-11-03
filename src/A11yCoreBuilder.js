@@ -375,6 +375,19 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
         // Couldn't even enumerate this document's frames -- nothing to add.
         return;
       }
+      // Each frame's address as its element gives it, read before any is
+      // scanned: one that detaches mid-scan is still named by it, as core
+      // and the other bindings name it.
+      const srcs = [];
+      for (const iframe of iframes) {
+        let src = null;
+        try {
+          src = (await iframe.getAttribute('src')) || null;
+        } catch (_) {
+          src = null;
+        }
+        srcs.push(src);
+      }
       for (let i = 0; i < iframes.length; i++) {
         const iframe = iframes[i];
         let switched = false;
@@ -394,7 +407,7 @@ class A11yCoreBuilder extends A11yCoreBuilderBase {
           // frame the browser blocks scripting in -- don't let one bad frame
           // abort the whole multi-frame scan; report it and keep going.
           frames.push({
-            url: switched ? (await this._safeCurrentFrameUrl()) : null,
+            url: (switched ? await this._safeCurrentFrameUrl() : null) || srcs[i],
             error: (e && e.message) || String(e)
           });
         } finally {
